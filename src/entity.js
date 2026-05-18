@@ -45,11 +45,38 @@ export class Entity {
     this.mesh.position.copy(this.pos);
     world.scene.add(this.mesh);
 
+    // Family & territory.
+    this.home = null;                       // a 'house' structure this agent lives at
+    this.parents = opts.parents ?? [];      // parent ids
+    this.kin = new Set(opts.kin ?? []);     // parents + children + siblings
+    this.familyId = opts.familyId ?? this.id;
+    this.tribeId = this.id;
+    this.tribeColor = this.color;
+    this.tribeSize = 1;
+    this._lastReproTick = -99999;
+
     this.action = 'IDLE';
     this.animState = 'idle';
     this.signal = null;
     this._prevEnergy = this.energy;
     this._buildCooldown = 0;
+
+    // Kin start out trusting each other — the seed of families and tribes.
+    for (const k of this.kin) {
+      const r = this.social.get(k);
+      r.trust = Math.max(r.trust, CONFIG.family.kinTrust);
+      r.familiarity = Math.max(r.familiarity, 0.5);
+    }
+    if (opts.homeStructure) this.home = opts.homeStructure;
+  }
+
+  setTribeColor(color) {
+    const fm = this.mesh?.userData?.flagMat;
+    if (fm) fm.color.copy(color);
+  }
+
+  atHome() {
+    return this.home ? this.pos.distanceTo(this.home.pos) < CONFIG.home.restRadius : false;
   }
 
   // One fixed simulation step (dt seconds).
@@ -75,9 +102,65 @@ export class Entity {
     this.memory.decay(tick);
     this.social.decay();
     this._cultural(p, tick);
+    this._home(p, tick);
+    this._tryReproduce(p, tick, entities);
 
-    this.fitness = this.age * 0.5 + this.energy * 0.2 + this.skills.skills.size * 4 + this.social.rel.size * 0.4;
+    // Fitness now rewards a lineage: surviving kin and a held home mean the
+    // agent's strategy reproduced, which is what evolution should select for.
+    this.fitness = this.age * 0.4 + this.energy * 0.15 + this.skills.skills.size * 4 +
+      this.social.rel.size * 0.3 + this.kin.size * 2.5 + (this.home ? 6 : 0);
     if (this.energy <= 0) this.die();
+  }
+
+  // Resting at home recovers energy; an unhoused agent that wanders into a
+  // friendly house claims it (settlements gather their own people).
+  _home(p, tick) {
+    if (!this.home) {
+      const claim = this.world.nearestHome(this.pos.x, this.pos.z,
+        (st) => st.tribe == null || st.tribe === this.tribeId || st.owner === this.id ||
+          this.kin.has(st.owner));
+      if (claim && claim.dist < CONFIG.home.restRadius) this.home = claim.st;
+    }
+    if (this.atHome() && (this.action === 'IDLE' || this.action === 'RETURN_HOME')) {
+      this.energy = clamp(this.energy + CONFIG.home.restRegenPerSecond * (1 / CONFIG.sim.tickRate),
+        0, CONFIG.entity.maxEnergy);
+    }
+  }
+
+  // Pair-bonding: two mutually trusting, well-fed, mature, same-tribe agents
+  // near a home produce a child that inherits from both and joins the family.
+  _tryReproduce(p, tick, entities) {
+    if (this.age < CONFIG.family.minAge) return;
+    if (this.energy < CONFIG.family.reproEnergy) return;
+    if (tick - this._lastReproTick < CONFIG.family.reproCooldownTicks) return;
+    if (entities.filter((e) => e.alive).length >= CONFIG.population.max) return;
+    if (!this.atHome()) return;
+
+    for (const { entity: e, dist } of p.entities) {
+      if (dist > CONFIG.entity.interactRadius * 1.5) continue;
+      if (e.age < CONFIG.family.minAge || e.energy < CONFIG.family.reproEnergy) continue;
+      if (tick - e._lastReproTick < CONFIG.family.reproCooldownTicks) continue;
+      if (this.kin.has(e.id)) continue; // no inbreeding within the nuclear family
+      const a = this.social.get(e.id);
+      const b = e.social.get(this.id);
+      if (a.trust < CONFIG.family.bondTrust || b.trust < CONFIG.family.bondTrust) continue;
+      if (a.familiarity < CONFIG.family.bondFamiliarity) continue;
+
+      this.energy -= CONFIG.family.reproCost;
+      e.energy -= CONFIG.family.reproCost;
+      this._lastReproTick = e._lastReproTick = tick;
+      this.world.spawnChild?.(this, e);
+      this.memory.remember('reproduced', tick, this.pos, 0.9);
+      e.memory.remember('reproduced', tick, e.pos, 0.9);
+      break;
+    }
+  }
+
+  registerChild(child) {
+    this.kin.add(child.id);
+    const r = this.social.get(child.id);
+    r.trust = Math.max(r.trust, CONFIG.family.kinTrust + 0.15);
+    r.familiarity = 0.7;
   }
 
   _observe(p, tick) {
@@ -91,6 +174,12 @@ export class Entity {
       }
       // Standing together while danger is near builds trust (shared peril).
       if (this._dangerBefore > 0 && dist < 8 && e.traits.aggression < 0.5) this.social.sharedDanger(e.id);
+      // Living alongside kin / tribe steadily deepens bonds — the slow
+      // accrual that lets families and pair-bonds actually form.
+      if (dist < 7 && (this.kin.has(e.id) || e.tribeId === this.tribeId)) {
+        const r = this.social.get(e.id);
+        r.trust = clamp(r.trust + CONFIG.family.tribeProxTrust, 0, 1);
+      }
     }
   }
 
@@ -154,17 +243,69 @@ export class Entity {
         this.memory.remember('signalled', tick, null, 0.1);
         want = 'interact';
         break;
+      case 'RETURN_HOME': {
+        // Head to our own home, or to a friendly house we're moving into
+        // (which _home() then claims when we get close enough).
+        const dest = this.home ? this.home.pos : target;
+        if (dest) {
+          const d = Math.hypot(this.pos.x - dest.x, this.pos.z - dest.z);
+          want = (this.home && d < CONFIG.home.restRadius * 0.6) ? 'idle'
+            : this._moveToward(dest, this._dangerBefore > 0 ? 'run' : 'walk', dt);
+        } else want = 'idle';
+        break;
+      }
+      case 'DEFEND': {
+        // Hold the line between home and the nearest intruder.
+        const v = choice.victim;
+        if (v && v.alive) {
+          const d = this.pos.distanceTo(v.pos);
+          if (d < CONFIG.entity.attackRadius) {
+            v.damage(CONFIG.entity.attackDamage, this);
+            this.social.conflict(v.id);
+            this.energy -= 3;
+            this.memory.remember('defended', tick, this.pos, 0.5);
+            want = 'attack';
+          } else want = this._moveToward(v.pos, 'run', dt);
+        } else if (this.home) {
+          want = this._moveToward(this.home.pos, 'walk', dt);
+        }
+        break;
+      }
       case 'BUILD':
-        if (!choice.gated && this.energy >= CONFIG.entity.buildMinEnergy && this._buildCooldown <= 0) {
+        if (!choice.gated && this.energy >= CONFIG.structures.houseMinEnergy && this._buildCooldown <= 0) {
           this._buildTimer = (this._buildTimer ?? 0) + dt;
           want = 'build';
           if (this._buildTimer > 1.4) {
-            this.world.addStructure(this.pos, this.color);
-            this.energy -= CONFIG.entity.buildEnergyCost;
+            const st = this.world.addStructure(this.pos, this.tribeColor, 'house', this);
+            this.energy -= CONFIG.structures.houseCost;
+            if (!this.home) this.home = st;   // first house becomes home
             this._buildTimer = 0;
             this._buildCooldown = 12;
             const safeNow = this._dangerBefore === 0;
-            this.memory.remember('built_safe', tick, this.pos, safeNow ? 0.8 : 0.3);
+            this.memory.remember('built_safe', tick, this.pos, safeNow ? 0.8 : 0.4);
+          }
+        } else want = 'idle';
+        break;
+      case 'FORTIFY':
+        if (this.home && this.energy >= CONFIG.structures.wallMinEnergy && this._buildCooldown <= 0) {
+          // Raise a wall segment on the ring around home, on the threatened
+          // side. Repeated fortifying grows a perimeter — a palisade.
+          const dir = choice.threatDir ?? this._homeOutwardDir();
+          const wx = this.home.pos.x + dir.x * CONFIG.structures.wallRing;
+          const wz = this.home.pos.z + dir.z * CONFIG.structures.wallRing;
+          want = this.pos.distanceTo(new THREE.Vector3(wx, this.pos.y, wz)) > 2.5
+            ? this._moveToward({ x: wx, z: wz }, 'walk', dt)
+            : 'build';
+          if (want === 'build') {
+            this._buildTimer = (this._buildTimer ?? 0) + dt;
+            if (this._buildTimer > 1.1) {
+              const facing = Math.atan2(dir.x, dir.z) + Math.PI / 2;
+              this.world.addStructure({ x: wx, z: wz, facing }, this.tribeColor, 'wall', this);
+              this.energy -= CONFIG.structures.wallCost;
+              this._buildTimer = 0;
+              this._buildCooldown = 7;
+              this.memory.remember('fortified', tick, this.pos, 0.6);
+            }
           }
         } else want = 'idle';
         break;
@@ -207,12 +348,24 @@ export class Entity {
     return gait;
   }
 
+  _homeOutwardDir() {
+    if (!this.home) return { x: Math.sin(this.heading), z: Math.cos(this.heading) };
+    const dx = this.pos.x - this.home.pos.x;
+    const dz = this.pos.z - this.home.pos.z;
+    const l = Math.hypot(dx, dz) || 1;
+    return { x: dx / l, z: dz / l };
+  }
+
   _physics(dt) {
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
     const lim = this.world.size * 0.97;
     this.pos.x = clamp(this.pos.x, -lim, lim);
     this.pos.z = clamp(this.pos.z, -lim, lim);
+    // Solid walls block movement — fortifications actually channel paths.
+    const fixed = this.world.resolveCollision(this.pos.x, this.pos.z, CONFIG.entity.radius);
+    this.pos.x = fixed.x;
+    this.pos.z = fixed.z;
     const gy = this.world.heightAt(this.pos.x, this.pos.z);
     this.pos.y = gy;
     this.mesh.userData.groundY = gy;
@@ -235,8 +388,10 @@ export class Entity {
     const W = this.learn.weights;
     const { reinforce, punish, traitDrift, weightMin, weightMax } = CONFIG.learning;
 
-    let good = dE > 0.3 || a === 'EAT' || (a === 'FLEE' && this._dangerBefore > 0);
-    let bad = (a !== 'IDLE' && dE < -1.2) || (a === 'ATTACK' && this.energy < 25);
+    const homeSafe = (a === 'RETURN_HOME' || a === 'FORTIFY' || a === 'DEFEND') && this._dangerBefore > 0;
+    let good = dE > 0.3 || a === 'EAT' || (a === 'FLEE' && this._dangerBefore > 0) || homeSafe ||
+      a === 'BUILD' && this._dangerBefore === 0;
+    let bad = (a !== 'IDLE' && a !== 'RETURN_HOME' && dE < -1.2) || (a === 'ATTACK' && this.energy < 25);
 
     if (good) {
       W[a] = clamp(W[a] + reinforce, weightMin, weightMax);
@@ -246,7 +401,8 @@ export class Entity {
       if (a === 'ATTACK') driftTrait(this.traits, 'aggression', +1, traitDrift);
       if (a === 'APPROACH' || a === 'GROUP') driftTrait(this.traits, 'sociability', +1, traitDrift);
       if (a === 'EXPLORE') driftTrait(this.traits, 'curiosity', +1, traitDrift);
-      if (a === 'FLEE') driftTrait(this.traits, 'caution', +1, traitDrift);
+      if (a === 'FLEE' || a === 'RETURN_HOME') driftTrait(this.traits, 'caution', +1, traitDrift);
+      if (a === 'FORTIFY' || a === 'DEFEND') driftTrait(this.traits, 'loyalty', +1, traitDrift);
     } else if (bad) {
       W[a] = clamp(W[a] - punish, weightMin, weightMax);
       if (a === 'ATTACK') driftTrait(this.traits, 'aggression', -1, traitDrift);

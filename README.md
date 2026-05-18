@@ -29,9 +29,21 @@ invention, and cultural diffusion.
   (`WARN` / `HELP` / `RALLY`) reshape neighbours' scoring.
 - **Emergent groups** — never hardcoded; clustering near trusted agents lowers
   perceived danger, so flocking, alliances and betrayal appear under threat.
-- **Construction** — agents build persistent low-poly structures (energy cost,
-  build animation) only when utility says it improves safety. Structures then
-  block sight and reshape navigation.
+- **Homes & families** — building a house creates a *home*; agents return to it
+  to rest (faster energy regen) and feel safer there. Two mature, well-fed,
+  mutually trusting agents at a home pair-bond and produce children that
+  inherit blended traits + skills and stay kin-linked to parents and siblings.
+- **Villages & tribes** — agents move into nearby friendly houses instead of
+  sprawling, so families cluster into villages. Tribes are *derived*, never
+  declared: a union-find pass over the kinship/trust graph plus shared villages
+  yields connected components, each given an Age-of-Empires-style banner colour.
+- **Fortifications** — when a rival tribe presses a settlement, loyal/cautious
+  agents `DEFEND` the perimeter and `FORTIFY` — raising solid wall segments on
+  a ring around home that actually block movement and line of sight, growing
+  into palisades around contested villages.
+- **Construction** — houses and walls are persistent low-poly structures with a
+  build animation and energy cost, built only when utility says they improve
+  survival/safety. They then reshape navigation and visibility.
 - **Learning** — outcomes reinforce/punish per-action weights and nudge traits.
 - **Generational evolution** — the fittest survivors parent mutated offspring
   that inherit traits *and* skills (tournament selection).
@@ -80,6 +92,7 @@ The site goes live at `https://<your-user>.github.io/CodeBlack/`. The Vite
 | `src/memory.js` | Short-term decay + long-term reinforced memory |
 | `src/personality.js` | Traits, inheritance, experiential drift |
 | `src/social.js` | Per-individual relationship ledger + signals |
+| `src/tribes.js` | Union-find derivation of villages/tribes from the social graph |
 | `src/decision.js` | Utility action scoring (the "mind") |
 | `src/skills.js` | Emergent invention + cultural diffusion |
 | `src/entity.js` | Agent integrating all systems per tick |

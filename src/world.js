@@ -92,25 +92,99 @@ export class World {
     return CONFIG.world.resourceEnergy;
   }
 
-  addStructure(pos, builderColor) {
-    const h = 2 + this.rng.range(0, 1.4);
-    const geo = new THREE.BoxGeometry(2.2, h, 2.2);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x6b5034, roughness: 0.9 });
-    const mesh = new THREE.Mesh(geo, mat);
+  // type: 'house' (a home anchor) or 'wall' (a solid fortification).
+  // tribeColor tints the roof/banner so settlements read like AoE players.
+  addStructure(pos, tribeColor, type = 'house', builder = null) {
     const y = this.heightAt(pos.x, pos.z);
-    mesh.position.set(pos.x, y + h / 2, pos.z);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    const cap = new THREE.Mesh(
-      new THREE.ConeGeometry(1.8, 1.3, 4),
-      new THREE.MeshStandardMaterial({ color: builderColor, roughness: 0.7 })
-    );
-    cap.position.y = h / 2 + 0.65;
-    mesh.add(cap);
+    const mesh = new THREE.Group();
+    mesh.position.set(pos.x, y, pos.z);
+    let radius;
+
+    if (type === 'wall') {
+      const len = 4.2;
+      const wall = new THREE.Mesh(
+        new THREE.BoxGeometry(len, 2.6, 1.0),
+        new THREE.MeshStandardMaterial({ color: 0x7d7264, roughness: 0.95 })
+      );
+      wall.position.y = 1.3;
+      wall.castShadow = true;
+      wall.receiveShadow = true;
+      // Face the wall tangent to the ring around home so segments line up.
+      mesh.rotation.y = pos.facing ?? 0;
+      const merlon = new THREE.Mesh(
+        new THREE.BoxGeometry(len, 0.5, 1.0),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.8 })
+      );
+      merlon.position.y = 2.85;
+      mesh.add(wall, merlon);
+      radius = 2.1;
+    } else {
+      const hgt = 2 + this.rng.range(0, 1.2);
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(2.4, hgt, 2.4),
+        new THREE.MeshStandardMaterial({ color: 0x6b5034, roughness: 0.9 })
+      );
+      body.position.y = hgt / 2;
+      body.castShadow = true;
+      body.receiveShadow = true;
+      const roof = new THREE.Mesh(
+        new THREE.ConeGeometry(2.0, 1.5, 4),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.7 })
+      );
+      roof.position.y = hgt + 0.75;
+      roof.rotation.y = Math.PI / 4;
+      mesh.add(body, roof);
+      radius = 1.7;
+    }
+
     this.scene.add(mesh);
-    const s = { pos: new THREE.Vector3(pos.x, y, pos.z), mesh, radius: 1.6 };
+    const s = {
+      pos: new THREE.Vector3(pos.x, y, pos.z),
+      mesh, radius, type,
+      solid: type === 'wall',
+      owner: builder ? builder.id : null,
+      tribe: builder ? builder.tribeId : null
+    };
     this.structures.push(s);
     return s;
+  }
+
+  nearestHome(x, z, predicate = null) {
+    let best = null;
+    let bd = Infinity;
+    for (const st of this.structures) {
+      if (st.type !== 'house') continue;
+      if (predicate && !predicate(st)) continue;
+      const d = (st.pos.x - x) ** 2 + (st.pos.z - z) ** 2;
+      if (d < bd) { bd = d; best = st; }
+    }
+    return best ? { st: best, dist: Math.sqrt(bd) } : null;
+  }
+
+  countHousesNear(x, z, radius) {
+    let n = 0;
+    for (const st of this.structures) {
+      if (st.type === 'house' && (st.pos.x - x) ** 2 + (st.pos.z - z) ** 2 < radius * radius) n++;
+    }
+    return n;
+  }
+
+  // Push a moving point out of solid walls (simple circle vs. AABB-ish).
+  resolveCollision(x, z, r) {
+    for (const st of this.structures) {
+      if (!st.solid) continue;
+      const dx = x - st.pos.x;
+      const dz = z - st.pos.z;
+      const d2 = dx * dx + dz * dz;
+      const min = st.radius + r;
+      if (d2 < min * min && d2 > 1e-6) {
+        const d = Math.sqrt(d2);
+        const push = (min - d) / d;
+        x += dx * push;
+        z += dz * push;
+      }
+    }
+    return { x, z };
   }
 
   // Structures block line of sight — used by perception.

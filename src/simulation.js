@@ -5,6 +5,8 @@ import { makeRng } from './rng.js';
 import { World } from './world.js';
 import { Entity } from './entity.js';
 import { Evolution } from './evolution.js';
+import { inheritTraits } from './personality.js';
+import { recomputeTribes } from './tribes.js';
 
 // Owns the renderer, the fixed-tick simulation loop, and the UI. Physics,
 // movement, perception, animation-state and decisions all advance on the
@@ -62,12 +64,49 @@ export class Simulation {
     this.world.onInvent = (ent, skill) => {
       this.world.inventions.push({ skill: skill.name, gen: ent.generation, tick: this.tickCount });
     };
+    this.world.spawnChild = (a, b) => this._spawnChild(a, b);
 
     this.evolution = new Evolution(this.world, this.rng);
+    this.tribes = [];
     this.entities = [];
     for (let i = 0; i < CONFIG.population.initial; i++) {
       this.entities.push(new Entity(this.world, this.rng, { generation: 1 }));
     }
+  }
+
+  // A child of two pair-bonded parents: blended mutated traits, skills from
+  // the fitter parent, born at the family home, kin-linked to parents and
+  // siblings so families cohere and tribes grow from lineages.
+  _spawnChild(a, b) {
+    if (this.entities.filter((e) => e.alive).length >= CONFIG.population.max) return;
+    const traits = inheritTraits(a.traits, b.traits, this.rng, CONFIG.evolution);
+    const fitter = a.fitness >= b.fitness ? a : b;
+    const home = a.home ?? b.home;
+    const base = home ? home.pos : a.pos;
+    const ang = this.rng.range(-Math.PI, Math.PI);
+    const kin = new Set([a.id, b.id, ...a.kin, ...b.kin]);
+    const child = new Entity(this.world, this.rng, {
+      traits,
+      skills: fitter.skills.exportSkills(),
+      generation: Math.max(a.generation, b.generation) + 1,
+      parents: [a.id, b.id],
+      kin: [...kin],
+      familyId: a.familyId,
+      homeStructure: home ?? null,
+      x: base.x + Math.sin(ang) * 3,
+      z: base.z + Math.cos(ang) * 3,
+      energy: 62
+    });
+    a.registerChild(child);
+    b.registerChild(child);
+    // Existing siblings adopt the newborn as kin too.
+    for (const e of this.entities) if (e.alive && (e.kin.has(a.id) || e.kin.has(b.id))) {
+      e.kin.add(child.id);
+      child.kin.add(e.id);
+    }
+    this.entities.push(child);
+    this.evolution.births++;
+    this.evolution.generation = Math.max(this.evolution.generation, child.generation);
   }
 
   reset() {
@@ -87,6 +126,9 @@ export class Simulation {
     this.world.update(this.tickCount);
     for (const e of this.entities) e.tick(this.entities, this.tickCount, dt);
     this.evolution.maintain(this.entities);
+    if (this.tickCount % CONFIG.tribe.recomputeTicks === 0) {
+      this.tribes = recomputeTribes(this.entities, this.world);
+    }
   }
 
   _frame = () => {
@@ -136,7 +178,10 @@ export class Simulation {
       pop: document.getElementById('hud-pop'),
       deaths: document.getElementById('hud-deaths'),
       births: document.getElementById('hud-births'),
-      struct: document.getElementById('hud-struct'),
+      tribes: document.getElementById('hud-tribes'),
+      biggest: document.getElementById('hud-biggest'),
+      houses: document.getElementById('hud-houses'),
+      walls: document.getElementById('hud-walls'),
       skills: document.getElementById('hud-skills'),
       inspector: document.getElementById('inspector')
     };
@@ -159,7 +204,13 @@ export class Simulation {
     this.ui.pop.textContent = this.entities.length;
     this.ui.deaths.textContent = this.evolution.deaths;
     this.ui.births.textContent = this.evolution.births;
-    this.ui.struct.textContent = this.world.structures.length;
+    const tribes = this.tribes ?? [];
+    this.ui.tribes.textContent = tribes.length;
+    this.ui.biggest.textContent = tribes[0]?.size ?? 0;
+    let houses = 0, walls = 0;
+    for (const st of this.world.structures) st.type === 'wall' ? walls++ : houses++;
+    this.ui.houses.textContent = houses;
+    this.ui.walls.textContent = walls;
     this.ui.skills.textContent = totalSkills.size;
 
     const s = this.selected;
@@ -173,8 +224,13 @@ export class Simulation {
       `<div class="bar"><i style="width:${Math.round(v * 100)}%;background:${c}"></i></div>`;
     const t = s.traits;
     const sk = [...s.skills.skills.values()].map((x) => x.name).join(', ') || '—';
+    const swatch = `#${s.tribeColor.getHexString()}`;
+    const homeTxt = s.home ? (s.atHome() ? 'at home' : 'has home') : 'homeless';
     this.ui.inspector.innerHTML = `
       <h3>Agent #${s.id} · gen ${s.generation}</h3>
+      <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${swatch};vertical-align:middle"></span>
+        tribe ${s.tribeId} · ${s.tribeSize} members</div>
+      <div>family: ${s.kin.size} kin · ${homeTxt}</div>
       <div>energy</div>${bar(s.energy / CONFIG.entity.maxEnergy, s.energy < 30 ? '#ff6b6b' : '#4fd28a')}
       <div>action <b style="color:#7fb2ff">${s.action}</b> · anim ${s.animState}</div>
       <div style="margin-top:6px">aggression</div>${bar(t.aggression, '#ff7a59')}

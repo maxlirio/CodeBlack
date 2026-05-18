@@ -44,7 +44,17 @@ export function createHumanoid(color) {
   const legR = limb(0.18, dark); legR.position.y = 0.72;
   group.add(armL, armR, legL, legR);
 
+  // Tribe banner: a small mast + flag whose colour is set per tribe so
+  // settlements and allegiance read instantly, like AoE player colours.
+  const mast = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.9, 0.04), dark);
+  mast.position.set(0, 2.55, 0);
+  const flagMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.6, side: THREE.DoubleSide });
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.32), flagMat);
+  flag.position.set(0.27, 2.78, 0);
+  group.add(mast, flag);
+
   group.userData.rig = { torso, head, armL, armR, legL, legR };
+  group.userData.flagMat = flagMat;
   group.userData.anim = { state: 'idle', blend: 0, phase: 0 };
   return group;
 }

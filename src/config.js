@@ -40,6 +40,42 @@ export const CONFIG = {
     buildMinEnergy: 62
   },
 
+  home: {
+    restRadius: 9,            // recover faster / feel safer within this of home
+    restRegenPerSecond: 3.2,  // energy regained per second while resting at home
+    safetyBonus: 0.55,        // danger is scaled down by this near home
+    homePull: 1.0             // base weight of the "go home" drive
+  },
+
+  family: {
+    bondTrust: 0.48,          // mutual trust needed to pair-bond
+    bondFamiliarity: 0.32,
+    reproEnergy: 60,          // both partners need at least this much
+    reproCost: 20,            // energy each parent spends on a child
+    reproCooldownTicks: 700,
+    minAge: 11,               // seconds before an agent can reproduce
+    kinTrust: 0.55,           // trust floor toward parents/children/siblings
+    tribeProxTrust: 0.02      // trust gained per tick standing among tribe/kin
+  },
+
+  tribe: {
+    recomputeTicks: 40,       // how often tribe membership is re-derived
+    linkTrust: 0.42,          // trust above this links two agents into a tribe
+    homeMergeDist: 26,        // tribe homes within this distance grow a village
+    rivalHostility: 0.34,     // baseline hostility added toward other tribes
+    fortifyThreatTicks: 360   // recent threat-at-home window that triggers walls
+  },
+
+  structures: {
+    houseCost: 34,
+    houseMinEnergy: 70,
+    wallCost: 14,
+    wallMinEnergy: 30,
+    wallRing: 13,             // walls are raised on this radius around home
+    maxHousesPerVillage: 5,
+    peoplePerHouse: 3         // a village only needs more houses as it grows
+  },
+
   social: {
     trustGainCoop: 0.08,
     trustGainProxDanger: 0.05,
@@ -82,6 +118,9 @@ export const ACTIONS = [
   'GROUP',
   'COMMUNICATE',
   'BUILD',
+  'FORTIFY',
+  'RETURN_HOME',
+  'DEFEND',
   'ATTACK'
 ];
 
