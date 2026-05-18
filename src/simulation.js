@@ -23,6 +23,10 @@ export class Simulation {
     this.mode = 'free';          // 'free' (WASD) | 'follow' | 'play'
     this.player = null;          // entity the human is controlling
     this.keys = new Set();
+    this._mouseDown = false;
+    this._pendingMelee = false;
+    this._pendingShot = null;    // charge 0..1 when a held shot is released
+    this._aimStart = 0;
     this._initRenderer();
     this._initScene();
     this._bindUI();
@@ -54,7 +58,24 @@ export class Simulation {
     });
 
     this.ray = new THREE.Raycaster();
-    this.renderer.domElement.addEventListener('pointerdown', (e) => this._pick(e));
+    // In play mode the mouse drives combat (click = strike, hold = aim a
+    // ranged shot); otherwise a click picks/selects a villager.
+    this.renderer.domElement.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if (this.mode === 'play') { this._mouseDown = true; this._aimStart = performance.now(); }
+      else this._pick(e);
+    });
+    addEventListener('pointerup', (e) => {
+      if (e.button !== 0 || this.mode !== 'play' || !this._mouseDown) return;
+      this._mouseDown = false;
+      const held = performance.now() - (this._aimStart || 0);
+      const ranged = (this.player?._rangedReach?.() ?? 0) > 0;
+      if (ranged && held >= 150) {
+        this._pendingShot = Math.min(1, Math.max(0.2, held / 900)); // charge
+      } else {
+        this._pendingMelee = true; // click = swing (or point-blank jab)
+      }
+    });
   }
 
   // WASD/QE free-fly until you click a villager (then the camera follows);
@@ -119,6 +140,9 @@ export class Simulation {
   _exitPlay() {
     if (this.player) this.player.controller = null;
     this.player = null;
+    this._mouseDown = false;
+    this._pendingMelee = false;
+    this._pendingShot = null;
     this._setMode(this.selected && this.selected.alive ? 'follow' : 'free');
   }
 
@@ -136,36 +160,52 @@ export class Simulation {
     if (K.has('d') || K.has('arrowright')) dir.add(right);
     if (K.has('a') || K.has('arrowleft')) dir.sub(right);
 
-    if (K.has(' ') || K.has('spacebar')) {
-      // With a bow/spear you aim where the camera looks and loose a shot;
-      // a gentle aim-assist nudges toward a target inside the reticle cone.
-      const reach = self._rangedReach?.() ?? 0;
-      if (reach > 0 && self._shootCd <= 0) {
-        let aim = { x: fwd.x, z: fwd.z };
-        let best = null, bestDot = Math.cos(CONFIG.projectile.autoAimCone);
-        const cands = [
-          ...p.animals.map((a) => a.animal),
-          ...p.entities.filter((e) => e.entity.tribeId !== self.tribeId).map((e) => e.entity)
-        ];
-        for (const c of cands) {
-          const dx = c.pos.x - self.pos.x, dz = c.pos.z - self.pos.z;
-          const L = Math.hypot(dx, dz) || 1;
-          if (L > reach) continue;
-          const dot = (dx / L) * fwd.x + (dz / L) * fwd.z;
-          if (dot > bestDot) { bestDot = dot; best = { x: dx, z: dz }; }
-        }
-        return { action: 'SHOOT', aim: best ?? aim };
+    // --- Mouse-driven combat ---
+    // Left-click = melee swing. With a bow/spear, hold to aim (the mouse
+    // steers the crosshair) and release to loose a charged shot. Space is
+    // kept as a keyboard fallback for the same actions.
+    const reach = self._rangedReach?.() ?? 0;
+    const spaceTap = (K.has(' ') || K.has('spacebar')) && !this._spaceHeld;
+    this._spaceHeld = K.has(' ') || K.has('spacebar');
+
+    const shotCharge = this._pendingShot ?? (spaceTap && reach > 0 ? 0.5 : null);
+    if (shotCharge != null && reach > 0 && self._shootCd <= 0) {
+      this._pendingShot = null;
+      let aim = { x: fwd.x, z: fwd.z };
+      let best = null, bestDot = Math.cos(CONFIG.projectile.autoAimCone);
+      const cands = [
+        ...p.animals.map((a) => a.animal),
+        ...p.entities.filter((e) => e.entity.tribeId !== self.tribeId).map((e) => e.entity)
+      ];
+      for (const c of cands) {
+        const dx = c.pos.x - self.pos.x, dz = c.pos.z - self.pos.z;
+        const L = Math.hypot(dx, dz) || 1;
+        if (L > reach) continue;
+        const dot = (dx / L) * fwd.x + (dz / L) * fwd.z;
+        if (dot > bestDot) { bestDot = dot; best = { x: dx, z: dz }; }
       }
-      // Otherwise a melee strike at the nearest enemy / beast / structure.
-      const foe = p.entities.find((e) => !self.kin.has(e.entity.id) &&
-        e.entity.tribeId !== self.tribeId);
-      const wolf = p.animals.find((a) => a.animal.predator);
-      const prey = p.animals.find((a) => !a.animal.predator);
-      if (foe && foe.dist < 7) return { action: 'ATTACK', victim: foe.entity, target: foe.entity.pos };
-      if (wolf && wolf.dist < 9) return { action: 'DEFEND', victim: wolf.animal, target: wolf.animal.pos };
-      if (prey && prey.dist < 9) return { action: 'HUNT', animal: prey.animal, target: prey.animal.pos };
-      const es = p.structures.find(({ st }) => st.tribe != null && st.tribe !== self.tribeId);
+      return { action: 'SHOOT', aim: best ?? aim, power: shotCharge };
+    }
+
+    if (this._pendingMelee || spaceTap) {
+      this._pendingMelee = false;
+      // Strike whatever the crosshair faces: enemy, beast, or structure.
+      const facing = (pos) => {
+        const dx = pos.x - self.pos.x, dz = pos.z - self.pos.z;
+        const L = Math.hypot(dx, dz) || 1;
+        return (dx / L) * fwd.x + (dz / L) * fwd.z > 0.2;
+      };
+      const foe = p.entities.find((e) => e.entity.tribeId !== self.tribeId &&
+        !self.kin.has(e.entity.id) && e.dist < 8 && facing(e.entity.pos));
+      const wolf = p.animals.find((a) => a.animal.predator && a.dist < 9 && facing(a.animal.pos));
+      const prey = p.animals.find((a) => !a.animal.predator && a.dist < 9 && facing(a.animal.pos));
+      const es = p.structures.find(({ st, dist }) => st.tribe != null &&
+        st.tribe !== self.tribeId && dist < 8 && facing(st.pos));
+      if (foe) return { action: 'ATTACK', victim: foe.entity, target: foe.entity.pos };
+      if (wolf) return { action: 'DEFEND', victim: wolf.animal, target: wolf.animal.pos };
+      if (prey) return { action: 'HUNT', animal: prey.animal, target: prey.animal.pos };
       if (es) return { action: 'RAID', struct: es.st, target: es.st.pos };
+      return { action: 'PLAYER_STRIKE' }; // a swing at empty air
     }
     if (K.has('b')) {
       const b = this._buildSel;
@@ -364,6 +404,19 @@ export class Simulation {
     ph.era.textContent = ['', 'I', 'II', 'III', 'IV'][s.tribeEra] ?? 'I';
     ph.role.textContent = s.role();
     ph.kin.textContent = s.kin.size;
+
+    // Crosshair feedback: grows & reddens as a held ranged shot charges.
+    const ranged = (s._rangedReach?.() ?? 0) > 0;
+    const ch = this.ui.crosshair;
+    if (this._mouseDown && ranged) {
+      const c = Math.min(1, (performance.now() - this._aimStart) / 900);
+      const sz = 18 + c * 22;
+      ch.style.width = ch.style.height = `${sz}px`;
+      ch.style.borderColor = `rgba(255,${Math.round(200 - c * 160)},${Math.round(160 - c * 140)},0.85)`;
+    } else {
+      ch.style.width = ch.style.height = '18px';
+      ch.style.borderColor = 'rgba(255,255,255,0.6)';
+    }
   }
 
   _pick(ev) {

@@ -483,11 +483,46 @@ export class Entity {
         let aim = choice.aim;
         if (!aim && tgt) aim = { x: tgt.x - this.pos.x, z: tgt.z - this.pos.z };
         if (aim) this.heading = Math.atan2(aim.x, aim.z);
-        if (this._shootCd <= 0 && aim && this._shoot(aim, this)) {
+        if (this._shootCd <= 0 && aim && this._shoot(aim, this, choice.power ?? 0.7)) {
           this.energy -= 2;
           this.memory.remember('hunted', tick, this.pos, 0.2);
           want = 'attack';
         } else want = aim ? 'turn' : 'idle';
+        break;
+      }
+      case 'PLAYER_STRIKE': {
+        // A mouse-click melee swing — hits whatever is in a short frontal
+        // arc (animal, agent or structure), else just plays the swing.
+        const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+        const inArc = (px, pz, reach) => {
+          const dx = px - this.pos.x, dz = pz - this.pos.z;
+          const L = Math.hypot(dx, dz) || 1;
+          return L < reach && (dx / L) * fx + (dz / L) * fz > 0.3;
+        };
+        let hit = false;
+        for (const a of this.world.animals) {
+          if (a.alive && inArc(a.pos.x, a.pos.z, CONFIG.entity.attackRadius + 1.2)) {
+            if (!a.damage(this._meleeDamage()) && a.gore && !this.tool) this.energy -= a.gore;
+            hit = true; break;
+          }
+        }
+        if (!hit) for (const { entity: e, dist } of p.entities) {
+          if (e.tribeId !== this.tribeId && !this.kin.has(e.id) &&
+              dist < CONFIG.entity.attackRadius + 1.2 && inArc(e.pos.x, e.pos.z, 99)) {
+            e.damage(this._meleeDamage(), this);
+            this.social.conflict(e.id);
+            hit = true; break;
+          }
+        }
+        if (!hit) for (const st of this.world.structures) {
+          if (st.tribe != null && st.tribe !== this.tribeId &&
+              inArc(st.pos.x, st.pos.z, CONFIG.entity.attackRadius + st.radius + 1)) {
+            this.world.damageStructure(st, this._meleeDamage());
+            hit = true; break;
+          }
+        }
+        if (hit) { this._useTool(); this.energy -= 1.5; }
+        want = 'attack';
         break;
       }
       case 'HUNT': {
@@ -642,14 +677,16 @@ export class Entity {
   }
 
   // Fire a ranged tool (bow) or hurl a spear toward a point/direction.
-  _shoot(aimDir, owner) {
+  // power 0..1 (player charge); a fuller draw flies faster and hits harder.
+  _shoot(aimDir, owner, power = 0.7) {
     const sp = this._toolSpec();
     const r = sp?.ranged || sp?.throw;
     if (!r) return false;
+    const k = 0.6 + 0.6 * power;
     const origin = new THREE.Vector3(this.pos.x, this.pos.y + 1.7, this.pos.z);
     this.world.spawnProjectile(origin, aimDir,
-      r.dmg + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra, this,
-      this.tool.type === 'bow' ? 'arrow' : 'spear', r.speed);
+      (r.dmg + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra) * k, this,
+      this.tool.type === 'bow' ? 'arrow' : 'spear', r.speed * k);
     this._useTool();
     this._shootCd = 14;
     return true;
