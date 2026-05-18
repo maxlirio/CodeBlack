@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CodeBlack — Emergent Agent Simulation</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+
+      #hud {
+        position: fixed; top: 12px; left: 12px;
+        background: rgba(8, 12, 22, 0.78);
+        border: 1px solid rgba(120, 160, 220, 0.25);
+        border-radius: 8px; padding: 12px 14px;
+        color: #cdd9ef; font-size: 12px; line-height: 1.55;
+        min-width: 230px; backdrop-filter: blur(6px);
+        pointer-events: none; user-select: none;
+      }
+      #hud b { color: #7fb2ff; font-weight: 600; }
+      #hud .tag { color: #6f7c95; }
+
+      #controls {
+        position: fixed; bottom: 12px; left: 12px;
+        display: flex; gap: 8px; flex-wrap: wrap;
+      }
+      #controls button {
+        background: rgba(20, 28, 46, 0.9);
+        border: 1px solid rgba(120, 160, 220, 0.3);
+        color: #cdd9ef; font: inherit; font-size: 12px;
+        padding: 7px 12px; border-radius: 6px; cursor: pointer;
+      }
+      #controls button:hover { background: rgba(40, 56, 90, 0.95); border-color: #7fb2ff; }
+
+      #inspector {
+        position: fixed; top: 12px; right: 12px;
+        background: rgba(8, 12, 22, 0.78);
+        border: 1px solid rgba(120, 160, 220, 0.25);
+        border-radius: 8px; padding: 12px 14px;
+        color: #cdd9ef; font-size: 12px; line-height: 1.5;
+        min-width: 230px; max-width: 280px; backdrop-filter: blur(6px);
+      }
+      #inspector h3 { font-size: 12px; color: #7fb2ff; margin-bottom: 6px; }
+      #inspector .bar { height: 6px; border-radius: 3px; background: #1b2438; margin: 3px 0 7px; overflow: hidden; }
+      #inspector .bar > i { display: block; height: 100%; background: #5b8bff; }
+      #inspector .hint { color: #6f7c95; margin-top: 8px; font-size: 11px; }
+      .legend { margin-top: 9px; color: #8b97b0; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="hud">
+      <div><b>CodeBlack</b> <span class="tag">— emergent civilization</span></div>
+      <div>tick <b id="hud-tick">0</b> · gen <b id="hud-gen">1</b></div>
+      <div>population <b id="hud-pop">0</b></div>
+      <div>deaths <b id="hud-deaths">0</b> · births <b id="hud-births">0</b></div>
+      <div>structures <b id="hud-struct">0</b></div>
+      <div>skills discovered <b id="hud-skills">0</b></div>
+      <div class="legend">Click an agent to inspect · drag to orbit · scroll to zoom</div>
+    </div>
+
+    <div id="inspector">
+      <h3>No agent selected</h3>
+      <div class="hint">Click any humanoid to follow its mind.</div>
+    </div>
+
+    <div id="controls">
+      <button id="btn-pause">Pause</button>
+      <button id="btn-speed">Speed: 1x</button>
+      <button id="btn-reset">Reset world</button>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

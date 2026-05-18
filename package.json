@@ -1,0 +1,18 @@
+{
+  "name": "codeblack",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-based 3D evolving-agent simulation built with Three.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
