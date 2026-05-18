@@ -3,7 +3,14 @@ import { CONFIG } from './config.js';
 // Strictly local perception: limited radius + facing cone + structure
 // occlusion. No agent ever receives global world state.
 export function perceive(self, entities, world, tick) {
-  const R = CONFIG.entity.perceptionRadius;
+  let R = CONFIG.entity.perceptionRadius;
+  // A friendly watchtower extends the vision of nearby tribe members —
+  // the emergent payoff of building one (early warning of raids/wolves).
+  for (const st of world.structures) {
+    if (st.type !== 'tower') continue;
+    if (st.tribe != null && st.tribe !== self.tribeId && st.owner !== self.id) continue;
+    if ((st.pos.x - self.pos.x) ** 2 + (st.pos.z - self.pos.z) ** 2 < 18 * 18) { R += 14; break; }
+  }
   const R2 = R * R;
   const fov = CONFIG.entity.perceptionFov;
   const fx = Math.sin(self.heading);

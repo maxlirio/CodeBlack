@@ -59,6 +59,15 @@ export function decide(self, p, tick, rng) {
   }
   if (!nearestThreat && self.memory.lastThreat(tick)) danger += 0.4;
 
+  // Predators are pure danger — wolves can't be reasoned with.
+  let wolf = null;
+  for (const { animal: a, dist } of p.animals) {
+    if (!a.predator) continue;
+    danger += (1 - dist / CONFIG.predator.senseRadius) * 0.9;
+    if (!wolf || dist < wolf._d) { wolf = a; wolf._d = dist; }
+  }
+  if (wolf && (!nearestThreat || wolf._d < nearestThreat._d)) nearestThreat = { pos: wolf.pos, _d: wolf._d };
+
   // Home is a sanctuary: danger felt there is dampened (the whole point of
   // settling and walling up), more so when kin stand with you.
   if (atHome) danger *= (1 - CONFIG.home.safetyBonus) / (1 + kinNear * 0.15);
@@ -84,13 +93,18 @@ export function decide(self, p, tick, rng) {
     if (mem) add('SEEK_RESOURCE', 0.4 + deficit * 2.4, { target: mem });
   }
 
-  // --- Home & family: retreat to home when hurt, tired, or in danger ---
+  // --- Home & family: actually *live* at home, not only flee to it ---
   if (hasHome && !atHome) {
-    const pull = CONFIG.home.homePull * (deficit * 1.6 + danger * (1.3 + t.caution) + 0.15);
+    // Hurt / tired / threatened pulls hard; but even content agents drift
+    // home to rest and be near family (this is what enables reproduction).
+    const homebody = 0.55 + t.sociability * 0.7 + t.loyalty * 0.4;
+    const pull = CONFIG.home.homePull *
+      (deficit * 1.6 + danger * (1.3 + t.caution) + homebody * (1 - danger));
     add('RETURN_HOME', pull, { target: self.home.pos });
   }
-  if (hasHome && atHome && (deficit > 0.3 || danger > 0.2)) {
-    add('RETURN_HOME', 0.6 + deficit * 1.4, {}); // stay home and rest
+  if (hasHome && atHome) {
+    // Stay put when safe: rest, get fed by the granary, raise a family.
+    add('RETURN_HOME', 0.9 + deficit * 1.6 + t.sociability * 0.5 - danger, {});
   }
 
   // --- Safety ---
@@ -109,8 +123,19 @@ export function decide(self, p, tick, rng) {
     add('DEFEND', (t.loyalty * 1.4 + t.aggression + Math.min(1, kinNear * 0.4)) * (1 + danger),
       { victim: homeRaider, target: homeRaider.pos });
   }
-  if (hasHome && self.energy >= CONFIG.structures.wallMinEnergy) {
-    const threatened = !!homeRaider || self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks);
+  // Brave, armed agents turn and fight a wolf rather than only fleeing.
+  if (wolf && wolf._d < CONFIG.entity.perceptionRadius * 0.4) {
+    add('DEFEND',
+      (t.aggression + t.riskTolerance * 0.6 + (self.weapon ? 1.4 : 0) + kinNear * 0.3 - t.caution * 0.6),
+      { victim: wolf, target: wolf.pos });
+  }
+  const wallSpec = CONFIG.structures.types.wall;
+  const wallCount = hasHome ? self.world.countStructures(
+    self.home.pos.x, self.home.pos.z, 'wall', CONFIG.structures.villageRadius) : 99;
+  if (hasHome && self.energy >= wallSpec.minEnergy &&
+      wallCount < CONFIG.structures.maxPerVillage.wall) {
+    const threatened = !!homeRaider || !!wolf ||
+      self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks);
     if (threatened) {
       const dir = homeRaider
         ? norm(homeRaider.pos.x - self.home.pos.x, homeRaider.pos.z - self.home.pos.z)
@@ -151,26 +176,94 @@ export function decide(self, p, tick, rng) {
     // Prefer moving in over building — this clusters families into villages.
     add('RETURN_HOME', 0.9 + t.sociability * 0.7, { target: friendlyHome.st.pos, claim: true });
   }
-  if (self.energy >= CONFIG.structures.houseMinEnergy && self._buildCooldown <= 0 && danger < 0.25) {
-    if (!hasHome && !friendlyHome) {
-      // Open ground, no shelter in sight: found a new settlement.
+  // Even out of sight, walk to the nearest existing settlement rather than
+  // founding a lone hut — this is what stops house sprawl.
+  let knownHome = friendlyHome;
+  if (!hasHome && !knownHome) {
+    const nh = self.world.nearestHome(self.pos.x, self.pos.z);
+    if (nh && nh.dist < CONFIG.structures.villageRadius * 3) {
+      knownHome = nh;
+      add('RETURN_HOME', 0.85 + t.sociability * 0.6 - nh.dist * 0.004,
+        { target: nh.st.pos, claim: true });
+    }
+  }
+  const Sty = CONFIG.structures.types;
+  const mine = (st) => st.tribe == null || st.tribe === self.tribeId ||
+    self.kin.has(st.owner) || st.owner === self.id;
+  // Hard caps counted against the actual village, not flaky perception —
+  // settlements complete and then invest energy in people, not endless walls.
+  const VR = CONFIG.structures.villageRadius;
+  const cap = CONFIG.structures.maxPerVillage;
+  // Count by place, not tribe tag — a village's buildings are the village's.
+  const have = (type) => hasHome
+    ? self.world.countStructures(self.home.pos.x, self.home.pos.z, type, VR) : 0;
+  if (self._buildCooldown <= 0 && danger < 0.25) {
+    if (!hasHome && !knownHome && self.energy >= Sty.house.minEnergy) {
       add('BUILD', 0.9 + t.sociability * 0.7 + t.caution * 0.4 +
-        self.memory.valenceOf('built_safe'), { build: true });
+        self.memory.valenceOf('built_safe'), { build: 'house' });
     } else if (hasHome) {
-      // Only expand when the village is genuinely overcrowded for its size.
-      const villageHouses = self.world.countHousesNear(
-        self.home.pos.x, self.home.pos.z, CONFIG.tribe.homeMergeDist);
+      const vh = self.world.countStructures(self.home.pos.x, self.home.pos.z, 'house', VR);
+      if (self.energy >= Sty.center.minEnergy && self.tribeSize >= 4 && have('center') < cap.center) {
+        add('BUILD', 1.0 + t.sociability * 0.6 + t.loyalty * 0.4, { build: 'center' });
+      }
+      if (self.energy >= Sty.storehouse.minEnergy && self.tribeSize >= 3 &&
+          have('storehouse') < cap.storehouse) {
+        add('BUILD', 0.8 + t.sociability * 0.5 + self.memory.valenceOf('stocked'), { build: 'storehouse' });
+      }
+      if ((self.tribeEra ?? 1) >= (Sty.tower.era ?? 2) && self.energy >= Sty.tower.minEnergy &&
+          (self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks) || wolf) &&
+          have('tower') < cap.tower) {
+        add('BUILD', 0.7 + t.caution * 0.8 + t.loyalty * 0.5, { build: 'tower' });
+      }
       const needed = Math.ceil(self.tribeSize / CONFIG.structures.peoplePerHouse);
-      if (villageHouses < Math.min(needed, CONFIG.structures.maxHousesPerVillage)) {
+      if (self.energy >= Sty.house.minEnergy &&
+          vh < Math.min(needed, CONFIG.structures.maxHousesPerVillage)) {
         add('BUILD', 0.45 + t.sociability * 0.4 + self.memory.valenceOf('built_safe') * 0.5,
-          { build: true });
+          { build: 'house' });
       }
     }
   }
 
+  // --- Stockpile economy: bank surplus, withdraw when hungry ---
+  let store = null;
+  for (const { st, dist } of p.structures) {
+    if (st.type === 'storehouse' && (!store || dist < store.dist)) store = { st, dist };
+  }
+  if (!store && hasHome) {
+    const ns = self.world.nearestStructure(self.pos.x, self.pos.z, 'storehouse');
+    if (ns && ns.dist < CONFIG.entity.perceptionRadius) store = ns;
+  }
+  if (store) {
+    if (self.energy > CONFIG.stockpile.depositKeep || self.wood > 0) {
+      add('STOCKPILE', 0.3 + t.sociability * 0.4 + t.loyalty * 0.3 +
+        Math.max(0, self.energy - CONFIG.stockpile.depositKeep) * 0.015,
+        { target: store.st.pos, store: store.st });
+    }
+    if (self.energy < CONFIG.stockpile.withdrawAt && store.st.store.food > 4) {
+      add('STOCKPILE', 1.4 + deficit * 2.5, { target: store.st.pos, store: store.st, withdraw: true });
+    }
+  }
+
+  // --- Raiding: a hungry, aggressive tribe strips a rival's stores ---
+  let enemyStruct = null;
+  for (const { st, dist } of p.structures) {
+    if (mine(st) || st.tribe == null) continue;
+    if (st.type === 'storehouse' || st.type === 'house' || st.type === 'center') {
+      if (!enemyStruct || dist < enemyStruct.dist) enemyStruct = { st, dist };
+    }
+  }
+  // Raiding is a hunger-driven last resort, not constant warfare.
+  if (enemyStruct && deficit > 0.3) {
+    const greed = st_food(enemyStruct.st) ? 1.2 : 0.45;
+    add('RAID',
+      (t.aggression * (0.4 + deficit) + t.riskTolerance * 0.4 - t.caution * 0.6) * greed,
+      { target: enemyStruct.st.pos, struct: enemyStruct.st });
+  }
+
   // --- Nature & technology: wood -> weapons -> hunting, and farming ---
   const tree = p.trees[0];
-  const prey = p.animals[0];
+  const prey = p.animals.find((a) => !a.animal.predator)?.animal
+    ? p.animals.find((a) => !a.animal.predator) : null;
   const wantWeapon = !self.weapon || self.weaponDur <= 1;
   const huntDrive = self.memory.valenceOf('hunted') + 0.2;
 
@@ -218,6 +311,10 @@ export function decide(self, p, tick, rng) {
 function norm(x, z) {
   const l = Math.hypot(x, z) || 1;
   return { x: x / l, z: z / l };
+}
+
+function st_food(st) {
+  return !!(st.store && st.store.food > 6);
 }
 
 function wanderTarget(self, rng) {

@@ -54,6 +54,19 @@ invention, and cultural diffusion.
   agents `DEFEND` the perimeter and `FORTIFY` — raising solid wall segments on
   a ring around home that actually block movement and line of sight, growing
   into palisades around contested villages.
+- **Low-poly Age-of-Empires loop** — settlements grow real building types:
+  **houses** (homes), **storehouses** (a shared, raidable food/wood
+  **stockpile** that a stocked granary turns into population growth),
+  **watchtowers** (extend tribe vision — unlocked in Era 2), **town
+  centres**, and **walls**. Structures have HP, take siege damage, are
+  repaired during peace, and can be razed. Hungry aggressive tribes **raid**
+  rival stores. Tribes advance through **Eras I→III** as accumulated skills +
+  construction cross thresholds (no tech tree — pure emergence), which scales
+  structure HP and weapon power. **Wolf packs** roam as a predator pressure,
+  hunting prey and lone/weak agents — which is *why* grouping, walls and
+  towers pay off. Each agent also shows an emergent **role** (Hunter,
+  Woodcutter, Builder, Warrior, Farmer, Keeper…) read from what it has
+  learned to do best — never assigned.
 - **Construction** — houses and walls are persistent low-poly structures with a
   build animation and energy cost, built only when utility says they improve
   survival/safety. They then reshape navigation and visibility.
@@ -106,7 +119,7 @@ The site goes live at `https://<your-user>.github.io/CodeBlack/`. The Vite
 | `src/memory.js` | Short-term decay + long-term reinforced memory |
 | `src/personality.js` | Traits, inheritance, experiential drift |
 | `src/social.js` | Per-individual relationship ledger + signals |
-| `src/tribes.js` | Union-find derivation of villages/tribes from the social graph |
+| `src/tribes.js` | Stable union-find tribes + emergent Era progression |
 | `src/decision.js` | Utility action scoring (the "mind") |
 | `src/skills.js` | Emergent invention + cultural diffusion |
 | `src/entity.js` | Agent integrating all systems per tick |

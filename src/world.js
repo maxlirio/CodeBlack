@@ -94,6 +94,14 @@ export class World {
           cx + this.rng.range(-8, 8), cz + this.rng.range(-8, 8), h));
       }
     }
+    for (let p = 0; p < CONFIG.predator.packs; p++) {
+      const cx = this.rng.range(-r, r);
+      const cz = this.rng.range(-r, r);
+      for (let i = 0; i < CONFIG.predator.perPack; i++) {
+        this.animals.push(new Animal(this, this.rng,
+          cx + this.rng.range(-6, 6), cz + this.rng.range(-6, 6), 100 + p, 'wolf'));
+      }
+    }
   }
 
   _addBush(x, z) {
@@ -210,6 +218,51 @@ export class World {
       merlon.position.y = 2.85;
       mesh.add(wall, merlon);
       radius = 2.1;
+    } else if (type === 'storehouse') {
+      // A squat hut with a conical thatch + a stacked-crate "stockpile".
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.9, 1.8, 7),
+        new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.9 }));
+      body.position.y = 0.9; body.castShadow = true;
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(2.3, 1.5, 7),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.7 }));
+      roof.position.y = 2.4;
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9),
+        new THREE.MeshStandardMaterial({ color: 0xb98a4a, roughness: 0.85 }));
+      crate.position.set(1.6, 0.45, 0);
+      mesh.add(body, roof, crate);
+      radius = 1.9;
+    } else if (type === 'tower') {
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.3, 5.2, 6),
+        new THREE.MeshStandardMaterial({ color: 0x8d8576, roughness: 0.95 }));
+      shaft.position.y = 2.6; shaft.castShadow = true;
+      const crown = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.0, 0.8, 6),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.8 }));
+      crown.position.y = 5.4;
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.4, 6),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.7 }));
+      roof.position.y = 6.4;
+      mesh.add(shaft, crown, roof);
+      radius = 1.5;
+    } else if (type === 'center') {
+      // Town centre: a broad platform with a tall banner totem — the heart
+      // of a settlement, rally point and culture hub.
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(3.0, 3.3, 0.8, 8),
+        new THREE.MeshStandardMaterial({ color: 0x7a6240, roughness: 0.95 }));
+      base.position.y = 0.4; base.receiveShadow = true;
+      const hut = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.0, 2.6),
+        new THREE.MeshStandardMaterial({ color: 0x6b5034, roughness: 0.9 }));
+      hut.position.y = 1.8; hut.castShadow = true;
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(2.4, 1.8, 4),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.7 }));
+      roof.position.y = 3.7; roof.rotation.y = Math.PI / 4;
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4, 4),
+        new THREE.MeshStandardMaterial({ color: 0x3a2f22 }));
+      pole.position.set(0, 5.5, 0);
+      const flag = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.0, 3),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.6 }));
+      flag.position.set(0.5, 6.6, 0); flag.rotation.z = -Math.PI / 2;
+      mesh.add(base, hut, roof, pole, flag);
+      radius = 2.6;
     } else {
       const hgt = 2 + this.rng.range(0, 1.2);
       const body = new THREE.Mesh(
@@ -230,15 +283,57 @@ export class World {
     }
 
     this.scene.add(mesh);
+    const spec = CONFIG.structures.types[type] ?? CONFIG.structures.types.house;
+    const eraMul = 1 + (((builder?.tribeEra ?? 1) - 1) * CONFIG.era.wallHpPerEra);
+    const maxHp = Math.round(spec.hp * eraMul);
     const s = {
       pos: new THREE.Vector3(pos.x, y, pos.z),
       mesh, radius, type,
-      solid: type === 'wall',
+      solid: !!spec.solid,
+      hp: maxHp, maxHp,
       owner: builder ? builder.id : null,
-      tribe: builder ? builder.tribeId : null
+      tribe: builder ? builder.tribeId : null,
+      store: type === 'storehouse' ? { food: 0, wood: 0 } : null
     };
     this.structures.push(s);
     return s;
+  }
+
+  damageStructure(st, dmg) {
+    st.hp -= dmg;
+    st._lastHit = this.tickNow ?? 0;
+    // Visibly list as it crumbles.
+    st.mesh.rotation.z = (1 - st.hp / st.maxHp) * 0.18;
+    if (st.hp <= 0) { this.removeStructure(st); return true; }
+    return false;
+  }
+
+  removeStructure(st) {
+    this.scene.remove(st.mesh);
+    st.mesh.traverse((o) => o.geometry?.dispose?.());
+    const i = this.structures.indexOf(st);
+    if (i >= 0) this.structures.splice(i, 1);
+  }
+
+  nearestStructure(x, z, type, predicate = null) {
+    let best = null, bd = Infinity;
+    for (const st of this.structures) {
+      if (st.type !== type) continue;
+      if (predicate && !predicate(st)) continue;
+      const d = (st.pos.x - x) ** 2 + (st.pos.z - z) ** 2;
+      if (d < bd) { bd = d; best = st; }
+    }
+    return best ? { st: best, dist: Math.sqrt(bd) } : null;
+  }
+
+  countStructures(x, z, type, radius, predicate = null) {
+    let n = 0;
+    for (const st of this.structures) {
+      if (st.type !== type) continue;
+      if (predicate && !predicate(st)) continue;
+      if ((st.pos.x - x) ** 2 + (st.pos.z - z) ** 2 < radius * radius) n++;
+    }
+    return n;
   }
 
   nearestHome(x, z, predicate = null) {
@@ -321,6 +416,14 @@ export class World {
         for (const fol of t.mesh.userData.foliage) fol.visible = true;
       }
     }
+    // Structures slowly mend (settlement upkeep) when not under siege.
+    for (const st of this.structures) {
+      if (st.hp < st.maxHp && tick - (st._lastHit ?? -9999) > 200) {
+        st.hp = Math.min(st.maxHp, st.hp + CONFIG.structures.repairPerTick * dt);
+        st.mesh.rotation.z = (1 - st.hp / st.maxHp) * 0.18;
+      }
+    }
+
     // Crops ripen; a mature crop becomes an edible food node (a harvest).
     for (let i = this.crops.length - 1; i >= 0; i--) {
       const c = this.crops[i];
@@ -333,25 +436,65 @@ export class World {
       }
     }
 
-    // Animals: roam/flee locally, herds repopulate toward their target size.
+    // Wildlife. Herbivores flee the nearest agent or wolf; wolves stalk the
+    // nearest prey animal, or a lone/weak agent — an ecological pressure
+    // that rewards grouping, walls and towers without any scripting.
+    const P = CONFIG.predator;
     for (const a of this.animals) {
       if (!a.alive) continue;
-      let nd = Infinity, np = null;
-      for (const e of entities) {
-        if (!e.alive) continue;
-        const d = e.pos.distanceTo(a.pos);
-        if (d < nd) { nd = d; np = e.pos; }
+      if (a.predator) {
+        let q = null, qd = Infinity;
+        for (const o of this.animals) {
+          if (o === a || !o.alive || o.predator) continue;
+          const d = o.pos.distanceTo(a.pos);
+          if (d < qd && d < P.senseRadius) { qd = d; q = o; }
+        }
+        for (const e of entities) {
+          if (!e.alive) continue;
+          const d = e.pos.distanceTo(a.pos);
+          const vulnerable = e.energy < 45 || (e._dangerBefore ?? 0) === 0;
+          if (d < qd && d < P.senseRadius && vulnerable) { qd = d; q = e; }
+        }
+        const inRange = a.predatorUpdate(dt, q ? q.pos : null, qd);
+        if (inRange && a._strikeCd === 0 && q) {
+          a._strikeCd = P.cooldownTicks;
+          if (q.hurt) {
+            if (q.hurt(P.damage)) { this.dropCarcass(q.pos); a.health = Math.min(P.health, a.health + 8); }
+          } else if (q.damage) {
+            q.damage(P.damage, null);
+            q.memory?.remember('threat', tick, a.pos, -1);
+          }
+        }
+      } else {
+        let nd = Infinity, np = null;
+        for (const e of entities) {
+          if (!e.alive) continue;
+          const d = e.pos.distanceTo(a.pos);
+          if (d < nd) { nd = d; np = e.pos; }
+        }
+        for (const w of this.animals) {
+          if (!w.alive || !w.predator) continue;
+          const d = w.pos.distanceTo(a.pos);
+          if (d < nd) { nd = d; np = w.pos; }
+        }
+        a.update(dt, nd, np);
       }
-      a.update(dt, nd, np);
     }
     for (let i = this.animals.length - 1; i >= 0; i--) {
       if (!this.animals[i].alive) { this.animals[i].remove(); this.animals.splice(i, 1); }
     }
-    const target = C.herds * C.animalsPerHerd;
-    if (this.animals.length < target && this.rng.chance(0.02)) {
+    const herbTarget = C.herds * C.animalsPerHerd;
+    const herbs = this.animals.filter((a) => !a.predator).length;
+    if (herbs < herbTarget && this.rng.chance(0.02)) {
       const r = this.size * 0.9;
       this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
         this.rng.int(0, C.herds - 1)));
+    }
+    const wolfTarget = P.packs * P.perPack;
+    if (this.animals.length - herbs < wolfTarget && this.rng.chance(0.006)) {
+      const r = this.size * 0.9;
+      this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
+        100, 'wolf'));
     }
   }
 

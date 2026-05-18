@@ -45,20 +45,39 @@ export function recomputeTribes(entities, world) {
 
   const tribes = [];
   for (const [root, members] of groups) {
-    const hue = (Math.abs(hash(root)) % 360) / 360;
+    // Stable identity: the smallest lineage id in the component. familyId
+    // is inherited and never reassigned, so the tribe keeps the same id
+    // (and colour, and structure ownership) even as members come and go.
+    let tribeId = Infinity;
+    for (const m of members) tribeId = Math.min(tribeId, m.familyId);
+    const hue = (Math.abs(hash(tribeId)) % 360) / 360;
     const color = new THREE.Color().setHSL(hue, 0.62, 0.55);
     const centroid = new THREE.Vector3();
+    const ids = new Set(members.map((m) => m.id));
     let homes = 0;
+    // Progress = stabilised skills among members + structures the tribe has
+    // raised. Crossing era thresholds advances the whole tribe — emergent
+    // "ages" with no tech tree, just accumulated success.
+    let skillCount = 0;
+    for (const m of members) skillCount += m.skills.skills.size;
+    let builtCount = 0;
+    for (const st of world.structures) if (ids.has(st.owner)) builtCount++;
+    const progress = skillCount + builtCount;
+    const T = CONFIG.era.thresholds;
+    let era = 1;
+    for (let i = 0; i < T.length; i++) if (progress >= T[i]) era = i + 1;
+
     for (const m of members) {
-      m.tribeId = root;
+      m.tribeId = tribeId;
       m.tribeColor = color;
       m.tribeSize = members.length;
+      m.tribeEra = era;
       m.setTribeColor(color);
       centroid.add(m.pos);
       if (m.home) homes++;
     }
     centroid.multiplyScalar(1 / members.length);
-    tribes.push({ id: root, members, size: members.length, centroid, homes });
+    tribes.push({ id: tribeId, members, size: members.length, centroid, homes, era, progress });
   }
   tribes.sort((a, b) => b.size - a.size);
   return tribes;

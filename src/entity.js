@@ -54,6 +54,7 @@ export class Entity {
     this.tribeId = this.id;
     this.tribeColor = this.color;
     this.tribeSize = 1;
+    this.tribeEra = 1;
     this._lastReproTick = -99999;
 
     // Tools & inventory — the basis of the wood -> weapon -> hunting tech.
@@ -84,6 +85,22 @@ export class Entity {
 
   atHome() {
     return this.home ? this.pos.distanceTo(this.home.pos) < CONFIG.home.restRadius : false;
+  }
+
+  // A readable label for what this agent has *learned* to specialise in —
+  // emergent, derived from its strongest learned weights, not assigned.
+  role() {
+    const W = this.learn.weights;
+    const map = {
+      HUNT: 'Hunter', GATHER_WOOD: 'Woodcutter', CRAFT: 'Toolmaker',
+      FARM: 'Farmer', BUILD: 'Builder', FORTIFY: 'Builder',
+      DEFEND: 'Warrior', ATTACK: 'Warrior', RAID: 'Raider',
+      STOCKPILE: 'Keeper', SEEK_RESOURCE: 'Forager', EAT: 'Forager',
+      APPROACH: 'Diplomat', GROUP: 'Diplomat', EXPLORE: 'Scout'
+    };
+    let best = 'Forager', bv = -Infinity;
+    for (const k in map) if ((W[k] ?? 1) > bv) { bv = W[k] ?? 1; best = map[k]; }
+    return best;
   }
 
   // One fixed simulation step (dt seconds).
@@ -129,8 +146,23 @@ export class Entity {
       if (claim && claim.dist < CONFIG.home.restRadius) this.home = claim.st;
     }
     if (this.atHome() && (this.action === 'IDLE' || this.action === 'RETURN_HOME')) {
-      this.energy = clamp(this.energy + CONFIG.home.restRegenPerSecond * (1 / CONFIG.sim.tickRate),
+      const sec = 1 / CONFIG.sim.tickRate;
+      this.energy = clamp(this.energy + CONFIG.home.restRegenPerSecond * sec,
         0, CONFIG.entity.maxEnergy);
+      // Food security: a stocked village granary feeds those resting at
+      // home, turning the shared stockpile into population growth.
+      if (this.energy < CONFIG.entity.maxEnergy) {
+        const SP = CONFIG.stockpile;
+        const gr = this.world.nearestStructure(this.home.pos.x, this.home.pos.z, 'storehouse',
+          (st) => st.store.food > 1);
+        if (gr && gr.dist < SP.feedRadius) {
+          const want = SP.feedRegenBonus * sec;
+          const afford = gr.st.store.food / SP.feedCostPerEnergy;
+          const give = Math.min(want, afford, CONFIG.entity.maxEnergy - this.energy);
+          this.energy += give;
+          gr.st.store.food -= give * SP.feedCostPerEnergy;
+        }
+      }
     }
   }
 
@@ -144,10 +176,11 @@ export class Entity {
     if (!this.atHome()) return;
 
     for (const { entity: e, dist } of p.entities) {
-      if (dist > CONFIG.entity.interactRadius * 1.5) continue;
-      if (e.age < CONFIG.family.minAge || e.energy < CONFIG.family.reproEnergy) continue;
+      if (dist > CONFIG.entity.perceptionRadius * 0.45) continue; // same village
+      if (e.age < CONFIG.family.minAge) continue;
+      if (e.energy < CONFIG.family.reproEnergy * 0.85) continue;
       if (tick - e._lastReproTick < CONFIG.family.reproCooldownTicks) continue;
-      if (this.kin.has(e.id)) continue; // no inbreeding within the nuclear family
+      if (this._closeKin(e)) continue; // only the nuclear family is off-limits
       const a = this.social.get(e.id);
       const b = e.social.get(this.id);
       if (a.trust < CONFIG.family.bondTrust || b.trust < CONFIG.family.bondTrust) continue;
@@ -161,6 +194,14 @@ export class Entity {
       e.memory.remember('reproduced', tick, e.pos, 0.9);
       break;
     }
+  }
+
+  // Off-limits = parent/child or full siblings. Cousins and the wider
+  // kin/tribe network can still pair, so a village keeps reproducing
+  // instead of freezing once everyone is distantly related.
+  _closeKin(e) {
+    if (this.parents.includes(e.id) || e.parents.includes(this.id)) return true;
+    return this.parents.some((pid) => e.parents.includes(pid));
   }
 
   registerChild(child) {
@@ -270,7 +311,7 @@ export class Entity {
           if (d < CONFIG.entity.attackRadius) {
             v.damage(this._meleeDamage(), this);
             this._useWeapon();
-            this.social.conflict(v.id);
+            if (v.id != null) this.social.conflict(v.id);  // v may be a wolf
             this.energy -= 3;
             this.memory.remember('defended', tick, this.pos, 0.5);
             want = 'attack';
@@ -280,23 +321,30 @@ export class Entity {
         }
         break;
       }
-      case 'BUILD':
-        if (!choice.gated && this.energy >= CONFIG.structures.houseMinEnergy && this._buildCooldown <= 0) {
+      case 'BUILD': {
+        const bt = typeof choice.build === 'string' ? choice.build : 'house';
+        const spec = CONFIG.structures.types[bt] ?? CONFIG.structures.types.house;
+        if (!choice.gated && this.energy >= spec.minEnergy && this._buildCooldown <= 0) {
           this._buildTimer = (this._buildTimer ?? 0) + dt;
           want = 'build';
           if (this._buildTimer > 1.4) {
-            const st = this.world.addStructure(this.pos, this.tribeColor, 'house', this);
-            this.energy -= CONFIG.structures.houseCost;
-            if (!this.home) this.home = st;   // first house becomes home
+            const st = this.world.addStructure(this.pos, this.tribeColor, bt, this);
+            this.energy -= spec.cost;
+            if (bt === 'house' && !this.home) this.home = st; // first house = home
             this._buildTimer = 0;
-            this._buildCooldown = 12;
+            // Long cool-down: build, then go live (forage, family) rather
+            // than construct endlessly — this frees energy for population.
+            this._buildCooldown = { house: 18, storehouse: 24, tower: 26, center: 30 }[bt] ?? 20;
             const safeNow = this._dangerBefore === 0;
             this.memory.remember('built_safe', tick, this.pos, safeNow ? 0.8 : 0.4);
+            if (bt === 'storehouse') this.memory.remember('stocked', tick, this.pos, 0.6);
           }
         } else want = 'idle';
         break;
-      case 'FORTIFY':
-        if (this.home && this.energy >= CONFIG.structures.wallMinEnergy && this._buildCooldown <= 0) {
+      }
+      case 'FORTIFY': {
+        const wspec = CONFIG.structures.types.wall;
+        if (this.home && this.energy >= wspec.minEnergy && this._buildCooldown <= 0) {
           // Raise a wall segment on the ring around home, on the threatened
           // side. Repeated fortifying grows a perimeter — a palisade.
           const dir = choice.threatDir ?? this._homeOutwardDir();
@@ -310,14 +358,65 @@ export class Entity {
             if (this._buildTimer > 1.1) {
               const facing = Math.atan2(dir.x, dir.z) + Math.PI / 2;
               this.world.addStructure({ x: wx, z: wz, facing }, this.tribeColor, 'wall', this);
-              this.energy -= CONFIG.structures.wallCost;
+              this.energy -= wspec.cost;
               this._buildTimer = 0;
-              this._buildCooldown = 7;
+              this._buildCooldown = 16;
               this.memory.remember('fortified', tick, this.pos, 0.6);
             }
           }
         } else want = 'idle';
         break;
+      }
+      case 'STOCKPILE': {
+        const st = choice.store;
+        if (st && st.store) {
+          if (this.pos.distanceTo(st.pos) > CONFIG.stockpile.storeRadius) {
+            want = this._moveToward(st.pos, 'walk', dt);
+          } else if (choice.withdraw) {
+            const take = Math.min(st.store.food,
+              CONFIG.stockpile.withdrawTo - this.energy);
+            if (take > 0) {
+              st.store.food -= take;
+              this.energy = clamp(this.energy + take, 0, CONFIG.entity.maxEnergy);
+              this.memory.remember('stocked', tick, st.pos, 0.5);
+            }
+            want = 'interact';
+          } else {
+            // Bank surplus energy as food + drop off any carried wood.
+            if (this.energy > CONFIG.stockpile.depositKeep) {
+              const give = Math.min(CONFIG.stockpile.depositChunk,
+                this.energy - CONFIG.stockpile.depositKeep);
+              this.energy -= give;
+              st.store.food += give;
+            }
+            if (this.wood > 0) { st.store.wood += this.wood; this.wood = 0; }
+            this.memory.remember('stocked', tick, st.pos, 0.6);
+            want = 'interact';
+          }
+        } else want = 'idle';
+        break;
+      }
+      case 'RAID': {
+        const st = choice.struct;
+        if (st && this.world.structures.includes(st)) {
+          if (this.pos.distanceTo(st.pos) > CONFIG.entity.attackRadius + st.radius) {
+            want = this._moveToward(st.pos, 'run', dt);
+          } else {
+            // Strip stored food, then batter the structure down.
+            if (st.store && st.store.food > 0) {
+              const loot = Math.min(st.store.food, CONFIG.stockpile.raidGain);
+              st.store.food -= loot;
+              this.energy = clamp(this.energy + loot, 0, CONFIG.entity.maxEnergy);
+            }
+            this.world.damageStructure(st, this._meleeDamage());
+            this._useWeapon();
+            this.energy -= 2;
+            this.memory.remember('raided', tick, st.pos, 0.5);
+            want = 'attack';
+          }
+        } else want = 'idle';
+        break;
+      }
       case 'GATHER_WOOD': {
         const tr = choice.tree;
         if (tr && tr.wood > 0) {
@@ -351,7 +450,9 @@ export class Entity {
         if (a && a.alive) {
           const d = this.pos.distanceTo(a.pos);
           if (d < CONFIG.entity.huntRadius) {
-            const dmg = this.weapon ? CONFIG.hunt.armedDamage : CONFIG.hunt.unarmedDamage;
+            const dmg = this.weapon
+              ? CONFIG.hunt.armedDamage + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra
+              : CONFIG.hunt.unarmedDamage;
             const killed = a.hurt(dmg);
             this._useWeapon();
             this.energy -= 2;
@@ -460,7 +561,8 @@ export class Entity {
   }
 
   _meleeDamage() {
-    return CONFIG.entity.attackDamage + (this.weapon ? CONFIG.hunt.armedAttackBonus : 0);
+    const era = (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra;
+    return CONFIG.entity.attackDamage + (this.weapon ? CONFIG.hunt.armedAttackBonus + era : 0);
   }
 
   _physics(dt) {
@@ -501,9 +603,10 @@ export class Entity {
     const huntWin = a === 'HUNT' && this.memory.valenceOf('hunted') > 0;
     let good = dE > 0.3 || a === 'EAT' || (a === 'FLEE' && this._dangerBefore > 0) || homeSafe ||
       (a === 'BUILD' && this._dangerBefore === 0) || a === 'CRAFT' || huntWin ||
-      (a === 'GATHER_WOOD' && this.wood > 0) || (a === 'FARM');
-    let bad = (a !== 'IDLE' && a !== 'RETURN_HOME' && a !== 'CRAFT' && a !== 'FARM' && dE < -1.2) ||
-      (a === 'ATTACK' && this.energy < 25) ||
+      (a === 'GATHER_WOOD' && this.wood > 0) || a === 'FARM' || a === 'STOCKPILE' ||
+      (a === 'DEFEND' && this._dangerBefore > 0);
+    let bad = (!['IDLE', 'RETURN_HOME', 'CRAFT', 'FARM', 'STOCKPILE', 'BUILD', 'FORTIFY'].includes(a) &&
+      dE < -1.2) || (a === 'ATTACK' && this.energy < 25) ||
       (a === 'HUNT' && !this.weapon && this.memory.valenceOf('hunted') < 0);
 
     if (good) {

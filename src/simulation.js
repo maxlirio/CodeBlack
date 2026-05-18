@@ -180,9 +180,15 @@ export class Simulation {
       births: document.getElementById('hud-births'),
       tribes: document.getElementById('hud-tribes'),
       biggest: document.getElementById('hud-biggest'),
+      era: document.getElementById('hud-era'),
       houses: document.getElementById('hud-houses'),
       walls: document.getElementById('hud-walls'),
+      stores: document.getElementById('hud-stores'),
+      towers: document.getElementById('hud-towers'),
+      centres: document.getElementById('hud-centres'),
+      food: document.getElementById('hud-food'),
       animals: document.getElementById('hud-animals'),
+      wolves: document.getElementById('hud-wolves'),
       crops: document.getElementById('hud-crops'),
       armed: document.getElementById('hud-armed'),
       skills: document.getElementById('hud-skills'),
@@ -210,11 +216,25 @@ export class Simulation {
     const tribes = this.tribes ?? [];
     this.ui.tribes.textContent = tribes.length;
     this.ui.biggest.textContent = tribes[0]?.size ?? 0;
-    let houses = 0, walls = 0;
-    for (const st of this.world.structures) st.type === 'wall' ? walls++ : houses++;
+    const ROM = ['I', 'I', 'II', 'III', 'IV'];
+    this.ui.era.textContent = ROM[Math.max(1, ...tribes.map((t) => t.era ?? 1))] ?? 'I';
+    let houses = 0, walls = 0, stores = 0, towers = 0, centres = 0, food = 0;
+    for (const st of this.world.structures) {
+      if (st.type === 'wall') walls++;
+      else if (st.type === 'storehouse') { stores++; food += st.store?.food ?? 0; }
+      else if (st.type === 'tower') towers++;
+      else if (st.type === 'center') centres++;
+      else houses++;
+    }
     this.ui.houses.textContent = houses;
     this.ui.walls.textContent = walls;
-    this.ui.animals.textContent = this.world.animals.length;
+    this.ui.stores.textContent = stores;
+    this.ui.towers.textContent = towers;
+    this.ui.centres.textContent = centres;
+    this.ui.food.textContent = Math.round(food);
+    const wolves = this.world.animals.filter((a) => a.predator).length;
+    this.ui.animals.textContent = this.world.animals.length - wolves;
+    this.ui.wolves.textContent = wolves;
     this.ui.crops.textContent = this.world.crops.length;
     this.ui.armed.textContent = this.entities.filter((e) => e.alive && e.weapon).length;
     this.ui.skills.textContent = totalSkills.size;
@@ -235,8 +255,8 @@ export class Simulation {
     this.ui.inspector.innerHTML = `
       <h3>Agent #${s.id} · gen ${s.generation}</h3>
       <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${swatch};vertical-align:middle"></span>
-        tribe ${s.tribeId} · ${s.tribeSize} members</div>
-      <div>family: ${s.kin.size} kin · ${homeTxt}</div>
+        tribe ${s.tribeId} · ${s.tribeSize} members · Era ${['','I','II','III','IV'][s.tribeEra] ?? 'I'}</div>
+      <div>role <b style="color:#7fb2ff">${s.role()}</b> · family ${s.kin.size} kin · ${homeTxt}</div>
       <div>energy</div>${bar(s.energy / CONFIG.entity.maxEnergy, s.energy < 30 ? '#ff6b6b' : '#4fd28a')}
       <div>action <b style="color:#7fb2ff">${s.action}</b> · anim ${s.animState}</div>
       <div>${s.weapon ? `armed (spear ×${s.weaponDur})` : 'unarmed'} · wood ${s.wood}</div>
