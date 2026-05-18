@@ -23,7 +23,8 @@ export class Simulation {
     this.mode = 'free';          // 'free' (WASD) | 'follow' | 'play'
     this.player = null;          // entity the human is controlling
     this.keys = new Set();
-    this._mouseDown = false;
+    this._spaceActive = false;   // spacebar held (aiming)
+    this._spaceDownT = 0;
     this._pendingMelee = false;
     this._pendingShot = null;    // charge 0..1 when a held shot is released
     this._aimStart = 0;
@@ -58,23 +59,10 @@ export class Simulation {
     });
 
     this.ray = new THREE.Raycaster();
-    // In play mode the mouse drives combat (click = strike, hold = aim a
-    // ranged shot); otherwise a click picks/selects a villager.
+    // Clicking selects/follows a villager — but never while you're playing
+    // one (combat is on the spacebar; the mouse only aims).
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      if (this.mode === 'play') { this._mouseDown = true; this._aimStart = performance.now(); }
-      else this._pick(e);
-    });
-    addEventListener('pointerup', (e) => {
-      if (e.button !== 0 || this.mode !== 'play' || !this._mouseDown) return;
-      this._mouseDown = false;
-      const held = performance.now() - (this._aimStart || 0);
-      const ranged = (this.player?._rangedReach?.() ?? 0) > 0;
-      if (ranged && held >= 150) {
-        this._pendingShot = Math.min(1, Math.max(0.2, held / 900)); // charge
-      } else {
-        this._pendingMelee = true; // click = swing (or point-blank jab)
-      }
+      if (e.button === 0 && this.mode !== 'play') this._pick(e);
     });
   }
 
@@ -86,6 +74,7 @@ export class Simulation {
     this._craftSel = 'spear';
     const BUILD_KEYS = { 1: 'house', 2: 'wall', 3: 'storehouse', 4: 'tower', 5: 'center', 6: 'gate' };
     const CRAFT_KEYS = { 7: 'spear', 8: 'bow', 9: 'axe', 0: 'club' };
+    const isSpace = (k) => k === ' ' || k === 'spacebar';
     addEventListener('keydown', (ev) => {
       const k = ev.key.toLowerCase();
       this.keys.add(k);
@@ -94,11 +83,30 @@ export class Simulation {
         if (BUILD_KEYS[k]) this._buildSel = BUILD_KEYS[k];
         if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
         if (k === 'escape') this._exitPlay();
+        // Spacebar = combat. Hold it (with a bow/spear) to aim — the mouse
+        // drags the crosshair — and let go to throw / loose the shot.
+        if (isSpace(k) && !this._spaceActive) {
+          this._spaceActive = true;
+          this._spaceDownT = performance.now();
+        }
         ev.preventDefault();
       }
     });
-    addEventListener('keyup', (ev) => this.keys.delete(ev.key.toLowerCase()));
-    addEventListener('blur', () => this.keys.clear());
+    addEventListener('keyup', (ev) => {
+      const k = ev.key.toLowerCase();
+      this.keys.delete(k);
+      if (this.mode === 'play' && isSpace(k) && this._spaceActive) {
+        this._spaceActive = false;
+        const held = performance.now() - (this._spaceDownT || 0);
+        const ranged = (this.player?._rangedReach?.() ?? 0) > 0;
+        if (ranged && held >= 160) {
+          this._pendingShot = Math.min(1, Math.max(0.2, held / 900)); // charged
+        } else {
+          this._pendingMelee = true; // tap = melee swing (a spear jab too)
+        }
+      }
+    });
+    addEventListener('blur', () => { this.keys.clear(); this._spaceActive = false; });
 
     // Mouse-look while playing a villager (no drag needed — the camera
     // follows the mouse), with sensible yaw/pitch limits.
@@ -140,7 +148,7 @@ export class Simulation {
   _exitPlay() {
     if (this.player) this.player.controller = null;
     this.player = null;
-    this._mouseDown = false;
+    this._spaceActive = false;
     this._pendingMelee = false;
     this._pendingShot = null;
     this._setMode(this.selected && this.selected.alive ? 'follow' : 'free');
@@ -160,15 +168,11 @@ export class Simulation {
     if (K.has('d') || K.has('arrowright')) dir.add(right);
     if (K.has('a') || K.has('arrowleft')) dir.sub(right);
 
-    // --- Mouse-driven combat ---
-    // Left-click = melee swing. With a bow/spear, hold to aim (the mouse
-    // steers the crosshair) and release to loose a charged shot. Space is
-    // kept as a keyboard fallback for the same actions.
+    // --- Spacebar combat ---
+    // Tap space = melee swing (a spear jab too). Hold space with a bow or
+    // spear to aim — the mouse drags the crosshair — release to fire/throw.
     const reach = self._rangedReach?.() ?? 0;
-    const spaceTap = (K.has(' ') || K.has('spacebar')) && !this._spaceHeld;
-    this._spaceHeld = K.has(' ') || K.has('spacebar');
-
-    const shotCharge = this._pendingShot ?? (spaceTap && reach > 0 ? 0.5 : null);
+    const shotCharge = this._pendingShot;
     if (shotCharge != null && reach > 0 && self._shootCd <= 0) {
       this._pendingShot = null;
       let aim = { x: fwd.x, z: fwd.z };
@@ -187,7 +191,10 @@ export class Simulation {
       return { action: 'SHOOT', aim: best ?? aim, power: shotCharge };
     }
 
-    if (this._pendingMelee || spaceTap) {
+    // A held "shot" with no ranged weapon just becomes a melee swing.
+    if (this._pendingShot != null && reach === 0) { this._pendingShot = null; this._pendingMelee = true; }
+
+    if (this._pendingMelee) {
       this._pendingMelee = false;
       // Strike whatever the crosshair faces: enemy, beast, or structure.
       const facing = (pos) => {
@@ -405,11 +412,11 @@ export class Simulation {
     ph.role.textContent = s.role();
     ph.kin.textContent = s.kin.size;
 
-    // Crosshair feedback: grows & reddens as a held ranged shot charges.
+    // Crosshair feedback: grows & reddens while spacebar is held to aim.
     const ranged = (s._rangedReach?.() ?? 0) > 0;
     const ch = this.ui.crosshair;
-    if (this._mouseDown && ranged) {
-      const c = Math.min(1, (performance.now() - this._aimStart) / 900);
+    if (this._spaceActive && ranged) {
+      const c = Math.min(1, (performance.now() - this._spaceDownT) / 900);
       const sz = 18 + c * 22;
       ch.style.width = ch.style.height = `${sz}px`;
       ch.style.borderColor = `rgba(255,${Math.round(200 - c * 160)},${Math.round(160 - c * 140)},0.85)`;
