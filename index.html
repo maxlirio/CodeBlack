@@ -70,6 +70,17 @@
       #player-hud .ph-row span { color: #8b97b0; }
       #player-hud .ph-row b { color: #ffd27f; }
 
+      #crosshair {
+        position: fixed; top: 50%; left: 50%; width: 18px; height: 18px;
+        transform: translate(-50%, -50%); pointer-events: none;
+        border: 2px solid rgba(255,255,255,0.6); border-radius: 50%;
+        box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+      }
+      #crosshair::after {
+        content: ''; position: absolute; top: 50%; left: 50%; width: 2px; height: 2px;
+        background: #fff; transform: translate(-50%, -50%);
+      }
+
       #play-help {
         position: fixed; bottom: 56px; left: 50%; transform: translateX(-50%);
         background: rgba(8, 12, 22, 0.85); border: 1px solid rgba(120,160,220,0.3);
@@ -102,20 +113,25 @@
 
     <button id="play-btn" style="display:none">▶ PLAY AS THIS VILLAGER</button>
 
+    <div id="crosshair" style="display:none"></div>
+
     <div id="player-hud" style="display:none">
       <div class="ph-row"><span>Energy</span><b id="ph-energy">0</b></div>
       <div class="ph-row"><span>Wood</span><b id="ph-wood">0</b></div>
-      <div class="ph-row"><span>Weapon</span><b id="ph-weapon">none</b></div>
+      <div class="ph-row"><span>Tool</span><b id="ph-weapon">none</b></div>
       <div class="ph-row"><span>Clan</span><b id="ph-clan">—</b></div>
       <div class="ph-row"><span>Era</span><b id="ph-era">I</b></div>
       <div class="ph-row"><span>Role</span><b id="ph-role">—</b></div>
       <div class="ph-row"><span>Kin</span><b id="ph-kin">0</b></div>
+      <hr style="border:none;border-top:1px solid rgba(255,138,160,0.25);margin:7px 0" />
+      <div class="ph-row"><span>Build [1-6]</span><b id="ph-build">house</b></div>
+      <div class="ph-row"><span>Craft [7-0]</span><b id="ph-craft">spear</b></div>
     </div>
 
     <div id="play-help" style="display:none">
-      <b>You are this villager.</b><br />
-      WASD move · Shift run · Space attack/hunt<br />
-      B build house · G build wall/gate · F plant · C craft · E gather/eat<br />
+      <b>You are this villager.</b> Mouse aims · move with WASD<br />
+      Shift run · Space attack / shoot (aim with crosshair)<br />
+      B build (1-6 pick) · G wall/gate · F plant · C craft (7-0 pick) · E gather/eat<br />
       <span style="color:#7fb2ff">Esc</span> or Release to hand back to the AI
     </div>
 

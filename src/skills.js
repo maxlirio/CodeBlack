@@ -22,6 +22,7 @@ const ACTION_TO_PRIMITIVE = {
   GATHER_WOOD: 'GATHER',
   CRAFT: 'CRAFT',
   HUNT: 'HUNT',
+  SHOOT: 'HUNT',
   FARM: 'GATHER',
   STOCKPILE: 'GATHER',
   RAID: 'HUNT',
@@ -34,7 +35,7 @@ const PRIMITIVE_TO_ACTIONS = {
   BUILD: ['BUILD', 'FORTIFY'],
   SIGNAL: ['COMMUNICATE', 'GROUP'],
   CRAFT: ['CRAFT'],
-  HUNT: ['HUNT', 'RAID']
+  HUNT: ['HUNT', 'SHOOT', 'RAID']
 };
 
 export class SkillSystem {

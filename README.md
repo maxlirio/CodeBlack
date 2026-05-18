@@ -21,11 +21,14 @@ invention, and cultural diffusion.
   sprout to golden grain. Everything is built from triangle primitives so it
   reads as what it is.
 - **Emergent tech path** — agents start with no tools. Foraging berries is
-  subsistence; the real food is animals, but bare hands almost always fail.
-  Agents must *learn* to chop **wood** from trees, **craft a flint spear**
-  (which then appears in-hand and wears out), and **hunt** — a kill becomes a
-  carcass shared with nearby kin/tribe. Settled, well-fed agents **farm**
-  crops near home for surplus. None of this is scripted: it falls out of the
+  subsistence; the real food is animals, but bare hands almost always fail
+  (a **boar** will gore you). Agents *learn* to chop **wood** and craft a
+  **toolkit** — **club** (cheap), **spear** (workhorse, also throwable),
+  **axe** (chops faster, decent in a fight), **bow** (Era 2, ranged) — each
+  shown in-hand and wearing out with use. Spears and bows fire real
+  arcing **projectiles**. Wildlife varies: fast low-yield **rabbits**,
+  staple **deer**, tanky high-yield **boar**, plus **wolf** predators.
+  Settled, well-fed agents **farm** crops near home for surplus. None of this is scripted: it falls out of the
   utility scores, reinforcement, and the invention system recombining the
   `MOVE / GATHER / BUILD / SIGNAL / CRAFT / HUNT` primitives.
 - **Strict local perception** — limited radius + facing cone + structures
@@ -85,9 +88,11 @@ invention, and cultural diffusion.
 - **Click a villager** → the camera **follows** it. Pressing any movement
   key drops back to free flight.
 - With a villager selected, hit **▶ PLAY AS THIS VILLAGER**. You take over:
-  `WASD` move · `Shift` run · `Space` attack/hunt · `B` build house ·
-  `G` build the next wall/gate segment · `F` plant · `C` craft a spear ·
-  `E` gather/eat/deposit · `Esc` (or Release) hands control back to the AI.
+  `WASD` move · `Shift` run · `Space` attack — or, with a **bow/spear**,
+  aim with the crosshair and loose a projectile (gentle aim-assist snaps
+  to a target in the reticle) · `1`–`6` pick what `B` builds · `7`–`0`
+  pick what `C` crafts · `G` wall/gate · `F` plant · `E` gather/eat ·
+  `Esc` (or Release) hands control back to the AI.
   Your input flows through the *exact same* action code the AI uses. The
   play camera follows your **mouse** (no dragging) and is collision-aware —
   it pulls in and lifts so it never ends up inside terrain or a building.

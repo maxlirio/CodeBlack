@@ -165,6 +165,12 @@ export function decide(self, p, tick, rng) {
       (0.6 + t.riskTolerance) - t.caution * Math.max(0, 0.5 - grudge * 0.4);
     add('ATTACK', want * (weakTarget._d < CONFIG.entity.attackRadius ? 2.4 : 1.1),
       { target: weakTarget.pos, victim: weakTarget });
+    // Archers open fire before closing — feud warfare goes ranged in Era 2.
+    const reach = self._rangedReach();
+    if (reach > 0 && weakTarget._d > CONFIG.entity.attackRadius && weakTarget._d < reach &&
+        self._shootCd <= 0) {
+      add('SHOOT', want * 1.3, { target: weakTarget.pos });
+    }
   }
 
   // --- Social ---
@@ -290,22 +296,28 @@ export function decide(self, p, tick, rng) {
     ? p.animals.find((a) => !a.animal.predator) : null;
   const wantWeapon = !self.weapon || self.weaponDur <= 1;
   const huntDrive = self.memory.valenceOf('hunted') + 0.2;
+  const minWood = CONFIG.tools.spear.wood;
 
-  // Gather wood — mostly to craft a weapon, valued more if game is around.
-  if (tree && wantWeapon && self.wood < CONFIG.hunt.weaponWoodCost) {
+  // Gather wood — mostly to make a tool, valued more if game is around.
+  if (tree && wantWeapon && self.wood < CONFIG.tools.bow.wood) {
     add('GATHER_WOOD',
       (0.5 + t.aggression * 0.7 + t.curiosity * 0.4 + huntDrive) * (prey ? 1.5 : 1) - danger,
       { target: tree.tree.pos, tree: tree.tree });
   }
-  // Craft a weapon once enough wood is on hand and it is safe to stop.
-  if (self.wood >= CONFIG.hunt.weaponWoodCost && wantWeapon &&
+  // Craft a tool once enough wood is on hand and it is safe to stop.
+  if (self.wood >= minWood && wantWeapon &&
       self.energy >= CONFIG.hunt.craftMinEnergy && self._buildCooldown <= 0) {
     add('CRAFT', 1.4 + t.aggression * 0.8 + t.curiosity * 0.5 - danger * 0.5, { craft: true });
   }
-  // Hunt: a feast, but bare-handed it usually fails — that gap is the
-  // selection pressure that makes weapon-making pay off.
+  // Hunt: a feast. Bare-handed usually fails (and a boar gores you), so
+  // tools pay off; a bow lets you take game from a safe distance.
   if (prey && prey.dist < CONFIG.entity.perceptionRadius * 0.8) {
     const armed = self.weapon ? 2.2 : 0.45;
+    const reach = self._rangedReach();
+    if (reach > 0 && prey.dist > CONFIG.entity.huntRadius && prey.dist < reach && self._shootCd <= 0) {
+      add('SHOOT', (t.aggression * (0.6 + deficit) + huntDrive) * 2.4,
+        { target: prey.animal.pos });
+    }
     add('HUNT',
       (t.aggression * (0.7 + deficit) + t.riskTolerance * 0.5 + huntDrive) * armed - t.caution * 0.4,
       { target: prey.animal.pos, animal: prey.animal });

@@ -61,12 +61,20 @@ export class Simulation {
   // pressing a movement key drops follow back to free flight.
   _bindInput() {
     const MOVE = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
+    this._buildSel = 'house';
+    this._craftSel = 'spear';
+    const BUILD_KEYS = { 1: 'house', 2: 'wall', 3: 'storehouse', 4: 'tower', 5: 'center', 6: 'gate' };
+    const CRAFT_KEYS = { 7: 'spear', 8: 'bow', 9: 'axe', 0: 'club' };
     addEventListener('keydown', (ev) => {
       const k = ev.key.toLowerCase();
       this.keys.add(k);
       if (this.mode === 'follow' && MOVE.has(k)) this._setMode('free');
-      if (this.mode === 'play' && k === 'escape') this._exitPlay();
-      if (this.mode === 'play') ev.preventDefault();
+      if (this.mode === 'play') {
+        if (BUILD_KEYS[k]) this._buildSel = BUILD_KEYS[k];
+        if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
+        if (k === 'escape') this._exitPlay();
+        ev.preventDefault();
+      }
     });
     addEventListener('keyup', (ev) => this.keys.delete(ev.key.toLowerCase()));
     addEventListener('blur', () => this.keys.clear());
@@ -129,7 +137,26 @@ export class Simulation {
     if (K.has('a') || K.has('arrowleft')) dir.sub(right);
 
     if (K.has(' ') || K.has('spacebar')) {
-      // Attack: nearest enemy agent, wolf, prey, or enemy structure.
+      // With a bow/spear you aim where the camera looks and loose a shot;
+      // a gentle aim-assist nudges toward a target inside the reticle cone.
+      const reach = self._rangedReach?.() ?? 0;
+      if (reach > 0 && self._shootCd <= 0) {
+        let aim = { x: fwd.x, z: fwd.z };
+        let best = null, bestDot = Math.cos(CONFIG.projectile.autoAimCone);
+        const cands = [
+          ...p.animals.map((a) => a.animal),
+          ...p.entities.filter((e) => e.entity.tribeId !== self.tribeId).map((e) => e.entity)
+        ];
+        for (const c of cands) {
+          const dx = c.pos.x - self.pos.x, dz = c.pos.z - self.pos.z;
+          const L = Math.hypot(dx, dz) || 1;
+          if (L > reach) continue;
+          const dot = (dx / L) * fwd.x + (dz / L) * fwd.z;
+          if (dot > bestDot) { bestDot = dot; best = { x: dx, z: dz }; }
+        }
+        return { action: 'SHOOT', aim: best ?? aim };
+      }
+      // Otherwise a melee strike at the nearest enemy / beast / structure.
       const foe = p.entities.find((e) => !self.kin.has(e.entity.id) &&
         e.entity.tribeId !== self.tribeId);
       const wolf = p.animals.find((a) => a.animal.predator);
@@ -140,10 +167,13 @@ export class Simulation {
       const es = p.structures.find(({ st }) => st.tribe != null && st.tribe !== self.tribeId);
       if (es) return { action: 'RAID', struct: es.st, target: es.st.pos };
     }
-    if (K.has('b')) return { action: 'BUILD', build: 'house' };
+    if (K.has('b')) {
+      const b = this._buildSel;
+      return (b === 'wall' || b === 'gate') ? { action: 'FORTIFY' } : { action: 'BUILD', build: b };
+    }
     if (K.has('g')) return { action: 'FORTIFY' };
     if (K.has('f')) return { action: 'FARM' };
-    if (K.has('c')) return { action: 'CRAFT' };
+    if (K.has('c')) return { action: 'CRAFT', craftType: this._craftSel };
     if (K.has('e')) {
       const tr = p.trees[0];
       const food = p.resources[0];
@@ -326,7 +356,9 @@ export class Simulation {
     const s = this.player, ph = this.ui.ph;
     ph.energy.textContent = Math.round(s.energy);
     ph.wood.textContent = s.wood;
-    ph.weapon.textContent = s.weapon ? `spear ×${s.weaponDur}` : 'none';
+    ph.weapon.textContent = s.tool ? `${s.tool.type} ×${s.tool.dur}` : 'none';
+    ph.build.textContent = this._buildSel;
+    ph.craft.textContent = this._craftSel;
     ph.clan.textContent = `#${s.tribeId} (${s.tribeSize})`;
     ph.clan.style.color = `#${s.tribeColor.getHexString()}`;
     ph.era.textContent = ['', 'I', 'II', 'III', 'IV'][s.tribeEra] ?? 'I';
@@ -378,6 +410,7 @@ export class Simulation {
       playBtn: document.getElementById('play-btn'),
       playHelp: document.getElementById('play-help'),
       playerHud: document.getElementById('player-hud'),
+      crosshair: document.getElementById('crosshair'),
       ph: {
         energy: document.getElementById('ph-energy'),
         wood: document.getElementById('ph-wood'),
@@ -385,7 +418,9 @@ export class Simulation {
         clan: document.getElementById('ph-clan'),
         era: document.getElementById('ph-era'),
         role: document.getElementById('ph-role'),
-        kin: document.getElementById('ph-kin')
+        kin: document.getElementById('ph-kin'),
+        build: document.getElementById('ph-build'),
+        craft: document.getElementById('ph-craft')
       }
     };
     const pause = document.getElementById('btn-pause');
@@ -407,6 +442,7 @@ export class Simulation {
     this.ui.modeTag.style.color = playing ? '#ff8aa0' : this.mode === 'follow' ? '#7fb2ff' : '#4fd28a';
     this.ui.playHelp.style.display = playing ? 'block' : 'none';
     this.ui.playerHud.style.display = playing ? 'block' : 'none';
+    this.ui.crosshair.style.display = playing ? 'block' : 'none';
     const canPlay = !!(this.selected && this.selected.alive);
     this.ui.playBtn.style.display = (playing || canPlay) ? 'block' : 'none';
     this.ui.playBtn.textContent = playing ? '■ RELEASE CONTROL' : '▶ PLAY AS THIS VILLAGER';

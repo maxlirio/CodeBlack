@@ -24,6 +24,13 @@ export const CONFIG = {
     animalFleeRadius: 16,
     animalWanderRadius: 30,
     carcassExpireTicks: 700,
+    // Herbivore species mixed into herds. boar gores bare-handed hunters.
+    species: {
+      deer:   { speed: 5.8, health: 32, food: 80,  scale: 1.0,  color: 0x9a6b3f, weight: 0.62 },
+      rabbit: { speed: 7.4, health: 12, food: 44,  scale: 0.45, color: 0xb9a989, weight: 0.22 },
+      boar:   { speed: 4.6, health: 60, food: 104, scale: 0.85, color: 0x5b4636, weight: 0.16,
+                gore: 9 }
+    },
     cropGrowTicks: 950,       // ticks from seed to harvest
     cropEnergy: 52,           // harvest yield — farming beats foraging
     cropPlantCost: 6          // energy spent planting a seed
@@ -62,13 +69,27 @@ export const CONFIG = {
   },
 
   hunt: {
-    weaponWoodCost: 3,        // wood needed to craft a weapon
-    weaponDurability: 6,      // kills before a weapon breaks
     craftMinEnergy: 40,
     unarmedDamage: 5,         // bare-handed: animals usually escape
-    armedDamage: 18,          // with a crafted weapon: hunting is viable
-    armedAttackBonus: 10,     // weapons also help in conflict between agents
     shareRadius: 7            // kin/tribe nearby share a kill (cooperation)
+  },
+
+  // Craftable tools & weapons. melee = bonus damage in a strike; ranged
+  // tools fire a projectile; woodBonus speeds up chopping; throw lets a
+  // melee weapon also be hurled. era gates more advanced kit.
+  tools: {
+    club:  { wood: 2, dur: 8,  melee: 8,  woodBonus: 0, era: 1 },
+    spear: { wood: 3, dur: 7,  melee: 14, woodBonus: 0, era: 1, throw: { dmg: 20, speed: 34, range: 22 } },
+    axe:   { wood: 4, dur: 10, melee: 11, woodBonus: 2, era: 1 },
+    bow:   { wood: 5, dur: 9,  melee: 3,  woodBonus: 0, era: 2,
+             ranged: { dmg: 16, speed: 46, range: 30 } }
+  },
+
+  projectile: {
+    gravity: 9,               // arc on thrown spears / arrows
+    hitRadius: 1.4,
+    maxLifeTicks: 90,
+    autoAimCone: 0.32         // gentle aim-assist toward a target in this cone
   },
 
   home: {
@@ -203,6 +224,7 @@ export const ACTIONS = [
   'GATHER_WOOD',
   'CRAFT',
   'HUNT',
+  'SHOOT',
   'FARM',
   'STOCKPILE',
   'RAID',

@@ -110,28 +110,52 @@ export function setCropGrowth(mesh, t) {
   for (const st of mesh.userData.stalks) st.material = ripe ? MAT.grain : MAT.sprout;
 }
 
-export function makeWeapon() {
-  // A flint-tipped spear, parented to a hand. Triangular head = obvious tool.
+// Held tool meshes, parented to a hand — each clearly distinct so you can
+// read an agent's kit at a glance.
+export function makeTool(type) {
   const g = new THREE.Group();
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.1, 4), MAT.shaft);
-  shaft.position.y = -0.15;
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.34, 4), MAT.flint);
-  tip.position.y = 0.5;
-  g.add(shaft, tip);
+  if (type === 'bow') {
+    const limb = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.035, 5, 9, Math.PI * 1.25), MAT.shaft);
+    const str = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.78, 3),
+      new THREE.MeshStandardMaterial({ color: 0xd9d2c0 }));
+    str.position.x = 0.18;
+    g.add(limb, str);
+  } else if (type === 'axe') {
+    const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.0, 4), MAT.shaft);
+    const headM = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.26, 0.06), MAT.flint);
+    headM.position.set(0.12, 0.42, 0);
+    g.add(haft, headM);
+  } else if (type === 'club') {
+    const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.95, 5), MAT.shaft);
+    const knob = new THREE.Mesh(new THREE.IcosahedronGeometry(0.16, 0), MAT.shaft);
+    knob.position.y = 0.5;
+    g.add(haft, knob);
+  } else { // spear
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.2, 4), MAT.shaft);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.34, 4), MAT.flint);
+    tip.position.y = 0.62;
+    g.add(shaft, tip);
+  }
   g.rotation.x = Math.PI * 0.5;
   return g;
 }
 
 // A low-poly quadruped: wedge body, snout, four legs, a triangular tail.
 export class Animal {
-  constructor(world, rng, x, z, herd, kind = 'herbivore') {
+  constructor(world, rng, x, z, herd, kind = 'herbivore', species = null) {
     this.world = world;
     this.rng = rng;
     this.herd = herd;
     this.kind = kind;
     this.predator = kind === 'wolf';
+    if (!this.predator && !species) species = Animal.pickSpecies(rng);
+    this.species = this.predator ? 'wolf' : species;
+    const sp = this.predator ? null : CONFIG.nature.species[species];
     this.alive = true;
-    this.health = this.predator ? CONFIG.predator.health : CONFIG.nature.animalHealth;
+    this.health = this.predator ? CONFIG.predator.health : sp.health;
+    this.speed = this.predator ? CONFIG.predator.speed : sp.speed;
+    this.food = this.predator ? CONFIG.predator.health : sp.food;  // carcass yield
+    this.gore = sp?.gore ?? 0;
     this.home = new THREE.Vector2(x, z);
     this.pos = new THREE.Vector3(x, world.heightAt(x, z), z);
     this.vel = new THREE.Vector3();
@@ -140,8 +164,8 @@ export class Animal {
     this._strikeCd = 0;
 
     const g = new THREE.Group();
-    const scale = this.predator ? 0.78 : 1;
-    const hide = this.predator ? MAT.wolf : MAT.hide;
+    const scale = this.predator ? 0.78 : sp.scale;
+    const hide = this.predator ? MAT.wolf : Animal._hideMat(sp.color);
     const dark = this.predator ? MAT.wolfDark : MAT.hideDark;
     const body = new THREE.Mesh(ANIMAL_BODY, hide);
     body.position.y = 0.95;
@@ -175,6 +199,24 @@ export class Animal {
     world.scene.add(g);
   }
 
+  static pickSpecies(rng) {
+    const sp = CONFIG.nature.species;
+    const total = Object.values(sp).reduce((s, v) => s + v.weight, 0);
+    let r = rng() * total;
+    for (const [name, v] of Object.entries(sp)) { if ((r -= v.weight) <= 0) return name; }
+    return 'deer';
+  }
+
+  static _hideMat(color) {
+    Animal._hideCache ??= new Map();
+    let m = Animal._hideCache.get(color);
+    if (!m) {
+      m = new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true });
+      Animal._hideCache.set(color, m);
+    }
+    return m;
+  }
+
   _applyMove(speed, dt) {
     this.pos.x += Math.sin(this.heading) * speed * dt;
     this.pos.z += Math.cos(this.heading) * speed * dt;
@@ -183,7 +225,9 @@ export class Animal {
     this.pos.z = clamp(this.pos.z, -lim, lim);
     this.pos.y = this.world.heightAt(this.pos.x, this.pos.z);
     this.mesh.position.copy(this.pos);
-    this.mesh.rotation.y = this.heading + Math.PI / 2;
+    // Body's head is +X; movement forward is (sin h, cos h) — so the mesh
+    // must yaw to heading - 90° (the old +90° pointed it backwards).
+    this.mesh.rotation.y = this.heading - Math.PI / 2;
     this.mesh.position.y += Math.abs(Math.sin(performance.now() * 0.006 + this.pos.x)) *
       0.05 * (speed > 1 ? 1 : 0.2);
   }
@@ -212,11 +256,11 @@ export class Animal {
   update(dt, nearestAgentDist, nearestAgentPos) {
     if (!this.alive) return;
     const C = CONFIG.nature;
-    let speed = C.animalSpeed * 0.35;
+    let speed = this.speed * 0.35;
     if (nearestAgentPos && nearestAgentDist < C.animalFleeRadius) {
       const away = new THREE.Vector3().subVectors(this.pos, nearestAgentPos).setY(0).normalize();
       this.heading = Math.atan2(away.x, away.z);
-      speed = C.animalSpeed;
+      speed = this.speed;
     } else {
       this._wanderT -= dt;
       if (this._wanderT <= 0) {
@@ -238,7 +282,7 @@ export class Animal {
   // Lets agents fight animals/wolves with the same code path as melee
   // against other agents (a downed beast becomes a carcass).
   damage(amount) {
-    if (this.hurt(amount)) { this.world.dropCarcass(this.pos); return true; }
+    if (this.hurt(amount)) { this.world.dropCarcass(this.pos, this.food); return true; }
     return false;
   }
 

@@ -15,6 +15,7 @@ export class World {
     this.crops = [];        // growing (not yet edible) plots
     this.animals = [];
     this.structures = [];
+    this.projectiles = [];    // flying arrows / thrown spears
     this.feuds = new Map();   // "tribeA|tribeB" -> hatred magnitude
     // Back-compat alias: older code referred to edible nodes as "resources".
     this.resources = this.foods;
@@ -178,8 +179,9 @@ export class World {
       owner, tribe, energy: CONFIG.nature.cropEnergy });
   }
 
-  // A felled animal becomes a short-lived carcass food node.
-  dropCarcass(pos) {
+  // A felled animal becomes a short-lived carcass food node (bigger
+  // species feed more — a boar is a real feast).
+  dropCarcass(pos, energy = CONFIG.nature.animalEnergy) {
     const y = this.heightAt(pos.x, pos.z);
     const mesh = new THREE.Mesh(
       new THREE.ConeGeometry(0.6, 0.5, 5),
@@ -190,7 +192,7 @@ export class World {
     this.scene.add(mesh);
     this.foods.push({ kind: 'carcass', pos: new THREE.Vector3(pos.x, y + 0.3, pos.z), mesh,
       available: true, expireAt: (this.tickNow ?? 0) + CONFIG.nature.carcassExpireTicks,
-      energy: CONFIG.nature.animalEnergy });
+      energy });
   }
 
   // type: 'house' (a home anchor) or 'wall' (a solid fortification).
@@ -405,6 +407,63 @@ export class World {
     return false;
   }
 
+  // Launch an arrow / thrown spear. dir is a unit-ish heading; a little
+  // upward arc is added so flight looks (and aims) like a real shot.
+  spawnProjectile(origin, dir, dmg, owner, kind = 'arrow', speed = 40) {
+    const v = new THREE.Vector3(dir.x, 0, dir.z);
+    if (v.lengthSq() < 1e-5) return;
+    v.normalize().multiplyScalar(speed);
+    v.y = speed * 0.16; // launch arc
+    const long = kind === 'spear';
+    const mesh = new THREE.Group();
+    const shaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(long ? 0.05 : 0.03, long ? 0.05 : 0.03, long ? 1.4 : 0.9, 4),
+      this._projMat ??= new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.8 }));
+    shaft.rotation.x = Math.PI / 2;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(long ? 0.1 : 0.07, 0.28, 4),
+      this._tipMat ??= new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.5 }));
+    tip.rotation.x = Math.PI / 2;
+    tip.position.z = long ? 0.8 : 0.55;
+    mesh.add(shaft, tip);
+    mesh.position.copy(origin);
+    this.scene.add(mesh);
+    this.projectiles.push({
+      pos: origin.clone(), vel: v, dmg, owner, kind, mesh,
+      life: CONFIG.projectile.maxLifeTicks
+    });
+  }
+
+  _updateProjectiles(dt, entities) {
+    const P = CONFIG.projectile;
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const pr = this.projectiles[i];
+      pr.vel.y -= P.gravity * dt;
+      pr.pos.addScaledVector(pr.vel, dt);
+      pr.mesh.position.copy(pr.pos);
+      pr.mesh.lookAt(pr.pos.clone().add(pr.vel));
+      let done = --pr.life <= 0 || pr.pos.y <= this.heightAt(pr.pos.x, pr.pos.z);
+
+      if (!done) {
+        for (const a of this.animals) {
+          if (!a.alive) continue;
+          if (pr.pos.distanceTo(a.pos) < P.hitRadius + 0.4) {
+            a.damage(pr.dmg); done = true; break;
+          }
+        }
+      }
+      if (!done) {
+        for (const e of entities) {
+          if (!e.alive || e === pr.owner) continue;
+          if (pr.owner && (e.tribeId === pr.owner.tribeId || pr.owner.kin?.has(e.id))) continue;
+          if (pr.pos.distanceTo(e.pos) < P.hitRadius) {
+            e.damage(pr.dmg, pr.owner); done = true; break;
+          }
+        }
+      }
+      if (done) { this.scene.remove(pr.mesh); this.projectiles.splice(i, 1); }
+    }
+  }
+
   _feudKey(a, b) { return a < b ? `${a}|${b}` : `${b}|${a}`; }
 
   feud(a, b) {
@@ -505,7 +564,7 @@ export class World {
         if (inRange && a._strikeCd === 0 && q) {
           a._strikeCd = P.cooldownTicks;
           if (q.hurt) {
-            if (q.hurt(P.damage)) { this.dropCarcass(q.pos); a.health = Math.min(P.health, a.health + 8); }
+            if (q.hurt(P.damage)) { this.dropCarcass(q.pos, q.food ?? CONFIG.nature.animalEnergy); a.health = Math.min(P.health, a.health + 8); }
           } else if (q.damage) {
             q.damage(P.damage, null);
             q.memory?.remember('threat', tick, a.pos, -1);
@@ -542,6 +601,8 @@ export class World {
       this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
         100, 'wolf'));
     }
+
+    this._updateProjectiles(dt, entities);
   }
 
   nearestAnimal(x, z) {

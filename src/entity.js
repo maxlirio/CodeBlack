@@ -8,7 +8,7 @@ import { randomTraits, driftTrait } from './personality.js';
 import { perceive } from './perception.js';
 import { decide } from './decision.js';
 import { createHumanoid, animateHumanoid } from './humanoid.js';
-import { makeWeapon } from './nature.js';
+import { makeTool } from './nature.js';
 import { villageAnchor, nextRingSlot, nextHousePlot } from './village.js';
 
 let NEXT_ID = 1;
@@ -58,11 +58,12 @@ export class Entity {
     this.tribeEra = 1;
     this._lastReproTick = -99999;
 
-    // Tools & inventory — the basis of the wood -> weapon -> hunting tech.
+    // Tools & inventory — the basis of the wood -> tools -> hunting tech.
+    // tool = { type:'spear'|'bow'|'axe'|'club', dur:n } or null (unarmed).
     this.wood = 0;
-    this.weapon = false;
-    this.weaponDur = 0;
-    this._weaponMesh = null;
+    this.tool = null;
+    this._toolMesh = null;
+    this._shootCd = 0;
 
     this.action = 'IDLE';
     this.animState = 'idle';
@@ -83,6 +84,12 @@ export class Entity {
     const fm = this.mesh?.userData?.flagMat;
     if (fm) fm.color.copy(color);
   }
+
+  // Back-compat: lots of code reads .weapon / .weaponDur.
+  get weapon() { return !!this.tool; }
+  get weaponDur() { return this.tool ? this.tool.dur : 0; }
+  get toolType() { return this.tool ? this.tool.type : 'none'; }
+  _toolSpec() { return this.tool ? CONFIG.tools[this.tool.type] : null; }
 
   atHome() {
     return this.home ? this.pos.distanceTo(this.home.pos) < CONFIG.home.restRadius : false;
@@ -109,6 +116,7 @@ export class Entity {
     if (!this.alive) return;
     this.age += dt;
     this._buildCooldown = Math.max(0, this._buildCooldown - dt);
+    this._shootCd = Math.max(0, this._shootCd - 1);
 
     const p = perceive(this, entities, this.world, tick);
     this._observe(p, tick);
@@ -288,7 +296,7 @@ export class Entity {
           const d = this.pos.distanceTo(v.pos);
           if (d < CONFIG.entity.attackRadius) {
             v.damage(this._meleeDamage(), this);
-            this._useWeapon();
+            this._useTool();
             this.social.conflict(v.id);
             this.energy -= 4;
             this.memory.remember('attacked', tick, v.pos, v.energy <= 0 ? 0.7 : 0.1);
@@ -322,7 +330,7 @@ export class Entity {
           const d = this.pos.distanceTo(v.pos);
           if (d < CONFIG.entity.attackRadius) {
             v.damage(this._meleeDamage(), this);
-            this._useWeapon();
+            this._useTool();
             if (v.id != null) this.social.conflict(v.id);  // v may be a wolf
             this.energy -= 3;
             this.memory.remember('defended', tick, this.pos, 0.5);
@@ -429,7 +437,7 @@ export class Entity {
               this.energy = clamp(this.energy + loot, 0, CONFIG.entity.maxEnergy);
             }
             this.world.damageStructure(st, this._meleeDamage());
-            this._useWeapon();
+            this._useTool();
             this.energy -= 2;
             this.memory.remember('raided', tick, st.pos, 0.5);
             want = 'attack';
@@ -452,33 +460,53 @@ export class Entity {
         } else want = 'idle';
         break;
       }
-      case 'CRAFT':
-        if (this.wood >= CONFIG.hunt.weaponWoodCost && this._buildCooldown <= 0) {
+      case 'CRAFT': {
+        const type = choice.craftType ?? this._chooseToolType();
+        const tc = CONFIG.tools[type] ?? CONFIG.tools.spear;
+        if (this.wood >= tc.wood && this._buildCooldown <= 0) {
           this._workTimer = (this._workTimer ?? 0) + dt;
           want = 'interact';
           if (this._workTimer > 1.5) {
-            this.wood -= CONFIG.hunt.weaponWoodCost;
-            this._equipWeapon();
+            this.wood -= tc.wood;
+            this._equipTool(type);
             this._workTimer = 0;
             this._buildCooldown = 5;
             this.memory.remember('crafted', tick, this.pos, 0.7);
           }
         } else want = 'idle';
         break;
+      }
+      case 'SHOOT': {
+        // Loose an arrow / hurl a spear. aim is a world XZ direction
+        // (camera-forward for the player; toward the target for the AI).
+        const tgt = choice.target;
+        let aim = choice.aim;
+        if (!aim && tgt) aim = { x: tgt.x - this.pos.x, z: tgt.z - this.pos.z };
+        if (aim) this.heading = Math.atan2(aim.x, aim.z);
+        if (this._shootCd <= 0 && aim && this._shoot(aim, this)) {
+          this.energy -= 2;
+          this.memory.remember('hunted', tick, this.pos, 0.2);
+          want = 'attack';
+        } else want = aim ? 'turn' : 'idle';
+        break;
+      }
       case 'HUNT': {
         const a = choice.animal;
         if (a && a.alive) {
           const d = this.pos.distanceTo(a.pos);
           if (d < CONFIG.entity.huntRadius) {
-            const dmg = this.weapon
-              ? CONFIG.hunt.armedDamage + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra
+            const sp = this._toolSpec();
+            const dmg = sp
+              ? sp.melee + CONFIG.entity.attackDamage * 0.4 + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra
               : CONFIG.hunt.unarmedDamage;
             const killed = a.hurt(dmg);
-            this._useWeapon();
+            this._useTool();
+            // A boar gores a hunter who closes bare-handed.
+            if (!killed && a.gore && !this.tool) this.energy -= a.gore;
             this.energy -= 2;
             want = 'attack';
             if (killed) {
-              this.world.dropCarcass(a.pos);
+              this.world.dropCarcass(a.pos, a.food);
               this.memory.remember('hunted', tick, a.pos, 1);
               // A successful kill is shared with kin/tribe nearby — the
               // cooperative payoff that makes hunting parties worthwhile.
@@ -574,28 +602,63 @@ export class Entity {
     return { x: dx / l, z: dz / l };
   }
 
-  _equipWeapon() {
-    this.weapon = true;
-    this.weaponDur = CONFIG.hunt.weaponDurability;
-    if (!this._weaponMesh) {
-      this._weaponMesh = makeWeapon();
-      this._weaponMesh.position.set(0, -0.7, 0.12);
-      this.mesh.userData.rig.armR.add(this._weaponMesh);
-    }
-    this._weaponMesh.visible = true;
+  // Pick which tool to make: bows once the tribe reaches Era 2 and the
+  // agent is hunt-minded; axes for dedicated woodcutters; spears as the
+  // reliable default; clubs only as a cheap fallback when wood is short.
+  _chooseToolType() {
+    const era = this.tribeEra ?? 1;
+    const W = this.learn.weights;
+    if (this.wood < CONFIG.tools.spear.wood) return 'club';
+    // Bows are a costly specialisation, not the default — only dedicated
+    // hunters in an advanced tribe save the extra wood for one. The cheap,
+    // effective spear stays the workhorse so hunting throughput holds up.
+    if (era >= 2 && this.wood >= CONFIG.tools.bow.wood &&
+        W.HUNT > 1.35 && this.traits.aggression > 0.55) return 'bow';
+    if (W.GATHER_WOOD > 1.2 && this.wood >= CONFIG.tools.axe.wood) return 'axe';
+    return 'spear';
   }
 
-  _useWeapon() {
-    if (!this.weapon) return;
-    if (--this.weaponDur <= 0) {           // tools wear out and must be remade
-      this.weapon = false;
-      if (this._weaponMesh) this._weaponMesh.visible = false;
+  _equipTool(type) {
+    const spec = CONFIG.tools[type];
+    this.tool = { type, dur: spec.dur };
+    if (this._toolMesh) { this.mesh.userData.rig.armR.remove(this._toolMesh); }
+    this._toolMesh = makeTool(type);
+    this._toolMesh.position.set(0, -0.7, 0.12);
+    this.mesh.userData.rig.armR.add(this._toolMesh);
+  }
+
+  _useTool() {
+    if (!this.tool) return;
+    if (--this.tool.dur <= 0) {            // tools wear out and must be remade
+      this.tool = null;
+      if (this._toolMesh) { this.mesh.userData.rig.armR.remove(this._toolMesh); this._toolMesh = null; }
     }
   }
 
   _meleeDamage() {
     const era = (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra;
-    return CONFIG.entity.attackDamage + (this.weapon ? CONFIG.hunt.armedAttackBonus + era : 0);
+    const sp = this._toolSpec();
+    return CONFIG.entity.attackDamage + (sp ? sp.melee + era : 0);
+  }
+
+  // Fire a ranged tool (bow) or hurl a spear toward a point/direction.
+  _shoot(aimDir, owner) {
+    const sp = this._toolSpec();
+    const r = sp?.ranged || sp?.throw;
+    if (!r) return false;
+    const origin = new THREE.Vector3(this.pos.x, this.pos.y + 1.7, this.pos.z);
+    this.world.spawnProjectile(origin, aimDir,
+      r.dmg + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra, this,
+      this.tool.type === 'bow' ? 'arrow' : 'spear', r.speed);
+    this._useTool();
+    this._shootCd = 14;
+    return true;
+  }
+
+  _rangedReach() {
+    const sp = this._toolSpec();
+    const r = sp?.ranged || sp?.throw;
+    return r ? r.range : 0;
   }
 
   _physics(dt) {
