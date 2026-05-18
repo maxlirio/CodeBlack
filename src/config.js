@@ -110,6 +110,7 @@ export const CONFIG = {
     types: {
       house:      { cost: 20, minEnergy: 62, hp: 60,  solid: false },
       wall:       { cost: 9,  minEnergy: 34, hp: 90,  solid: true  },
+      gate:       { cost: 12, minEnergy: 40, hp: 100, solid: false },
       storehouse: { cost: 18, minEnergy: 58, hp: 80,  solid: false },
       tower:      { cost: 22, minEnergy: 64, hp: 120, solid: true, era: 2 },
       center:     { cost: 26, minEnergy: 70, hp: 160, solid: false }

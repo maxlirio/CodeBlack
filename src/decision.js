@@ -1,4 +1,5 @@
 import { CONFIG } from './config.js';
+import { villageAnchor, nextHousePlot, ringComplete } from './village.js';
 
 // Lightweight utility-based arbitration. Every tick each candidate action
 // is scored from needs + personality + memory + social context + family,
@@ -129,18 +130,22 @@ export function decide(self, p, tick, rng) {
       (t.aggression + t.riskTolerance * 0.6 + (self.weapon ? 1.4 : 0) + kinNear * 0.3 - t.caution * 0.6),
       { victim: wolf, target: wolf.pos });
   }
+  // Fortify: extend the shared connected wall ring (entity picks the next
+  // missing ring/gate slot). Urgent under threat; otherwise a steady civic
+  // drive so an established town eventually walls itself with gates.
   const wallSpec = CONFIG.structures.types.wall;
-  const wallCount = hasHome ? self.world.countStructures(
-    self.home.pos.x, self.home.pos.z, 'wall', CONFIG.structures.villageRadius) : 99;
-  if (hasHome && self.energy >= wallSpec.minEnergy &&
-      wallCount < CONFIG.structures.maxPerVillage.wall) {
-    const threatened = !!homeRaider || !!wolf ||
-      self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks);
-    if (threatened) {
-      const dir = homeRaider
-        ? norm(homeRaider.pos.x - self.home.pos.x, homeRaider.pos.z - self.home.pos.z)
-        : self._homeOutwardDir();
-      add('FORTIFY', (0.8 + t.caution * 1.5 + t.loyalty + danger) * 1.1, { threatDir: dir });
+  if (hasHome && self.energy >= wallSpec.minEnergy) {
+    const anc = villageAnchor(self, self.world) ?? self.home.pos;
+    const ringDone = ringComplete(self.world, anc);
+    // Economy before military: only wall up calmly once the village has a
+    // granary (food security). Under real threat, fortify hard regardless.
+    const hasGranary = self.world.countStructures(
+      self.home.pos.x, self.home.pos.z, 'storehouse', CONFIG.structures.villageRadius) > 0;
+    if (!ringDone) {
+      const threatened = !!homeRaider || !!wolf ||
+        self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks);
+      if (threatened) add('FORTIFY', (0.8 + t.caution * 1.5 + t.loyalty + danger) * 1.1, {});
+      else if (hasGranary) add('FORTIFY', 0.22 + t.caution * 0.25 + t.loyalty * 0.2, {});
     }
   }
 
@@ -197,29 +202,37 @@ export function decide(self, p, tick, rng) {
   // Count by place, not tribe tag — a village's buildings are the village's.
   const have = (type) => hasHome
     ? self.world.countStructures(self.home.pos.x, self.home.pos.z, type, VR) : 0;
+  const anchor = hasHome ? villageAnchor(self, self.world) : null;
+  const plot = anchor ? nextHousePlot(self.world, anchor, self.pos) : null;
   if (self._buildCooldown <= 0 && danger < 0.25) {
     if (!hasHome && !knownHome && self.energy >= Sty.house.minEnergy) {
-      add('BUILD', 0.9 + t.sociability * 0.7 + t.caution * 0.4 +
+      // Founding a brand-new settlement away from any tribe is allowed but
+      // deliberately unattractive — cohesion is rewarded, sprawl is not.
+      add('BUILD', 0.55 + t.curiosity * 0.4 + t.caution * 0.3 - t.sociability * 0.3 +
         self.memory.valenceOf('built_safe'), { build: 'house' });
     } else if (hasHome) {
       const vh = self.world.countStructures(self.home.pos.x, self.home.pos.z, 'house', VR);
-      if (self.energy >= Sty.center.minEnergy && self.tribeSize >= 4 && have('center') < cap.center) {
-        add('BUILD', 1.0 + t.sociability * 0.6 + t.loyalty * 0.4, { build: 'center' });
-      }
-      if (self.energy >= Sty.storehouse.minEnergy && self.tribeSize >= 3 &&
+      // Granary first — it is the village's food security and the engine of
+      // population growth, so it strongly outranks walls and even houses.
+      if (self.energy >= Sty.storehouse.minEnergy && self.tribeSize >= 2 &&
           have('storehouse') < cap.storehouse) {
-        add('BUILD', 0.8 + t.sociability * 0.5 + self.memory.valenceOf('stocked'), { build: 'storehouse' });
+        add('BUILD', 1.3 + t.sociability * 0.5 + self.memory.valenceOf('stocked'),
+          { build: 'storehouse', spot: plot });
+      }
+      if (self.energy >= Sty.center.minEnergy && self.tribeSize >= 3 && have('center') < cap.center) {
+        add('BUILD', 1.0 + t.sociability * 0.6 + t.loyalty * 0.4, { build: 'center', spot: plot });
       }
       if ((self.tribeEra ?? 1) >= (Sty.tower.era ?? 2) && self.energy >= Sty.tower.minEnergy &&
           (self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks) || wolf) &&
           have('tower') < cap.tower) {
-        add('BUILD', 0.7 + t.caution * 0.8 + t.loyalty * 0.5, { build: 'tower' });
+        add('BUILD', 0.7 + t.caution * 0.8 + t.loyalty * 0.5, { build: 'tower', spot: plot });
       }
+      // Grow the village onto the next tidy plot when overcrowded for size.
       const needed = Math.ceil(self.tribeSize / CONFIG.structures.peoplePerHouse);
-      if (self.energy >= Sty.house.minEnergy &&
+      if (self.energy >= Sty.house.minEnergy && plot &&
           vh < Math.min(needed, CONFIG.structures.maxHousesPerVillage)) {
-        add('BUILD', 0.45 + t.sociability * 0.4 + self.memory.valenceOf('built_safe') * 0.5,
-          { build: 'house' });
+        add('BUILD', 0.5 + t.sociability * 0.4 + self.memory.valenceOf('built_safe') * 0.5,
+          { build: 'house', spot: plot });
       }
     }
   }

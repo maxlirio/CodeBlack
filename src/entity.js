@@ -9,6 +9,7 @@ import { perceive } from './perception.js';
 import { decide } from './decision.js';
 import { createHumanoid, animateHumanoid } from './humanoid.js';
 import { makeWeapon } from './nature.js';
+import { villageAnchor, nextRingSlot, nextHousePlot } from './village.js';
 
 let NEXT_ID = 1;
 
@@ -112,7 +113,9 @@ export class Entity {
     const p = perceive(this, entities, this.world, tick);
     this._observe(p, tick);
 
-    const choice = decide(this, p, tick, this.rng);
+    // When a human is playing as this villager, their input replaces the
+    // utility AI; everything else (physics, energy, animation) is identical.
+    const choice = this.controller ? this.controller(this, p) : decide(this, p, tick, this.rng);
     const prevAction = this.action;
     this.action = choice.action;
     this.skills.record(choice.action);
@@ -325,10 +328,18 @@ export class Entity {
         const bt = typeof choice.build === 'string' ? choice.build : 'house';
         const spec = CONFIG.structures.types[bt] ?? CONFIG.structures.types.house;
         if (!choice.gated && this.energy >= spec.minEnergy && this._buildCooldown <= 0) {
+          // Build on the tidy village plot if one was assigned (keeps towns
+          // organised); otherwise where standing (founding / player mode).
+          const spot = choice.spot;
+          if (spot && Math.hypot(this.pos.x - spot.x, this.pos.z - spot.z) > 2.4) {
+            want = this._moveToward(spot, 'walk', dt);
+            break;
+          }
           this._buildTimer = (this._buildTimer ?? 0) + dt;
           want = 'build';
           if (this._buildTimer > 1.4) {
-            const st = this.world.addStructure(this.pos, this.tribeColor, bt, this);
+            const where = spot ? { x: spot.x, z: spot.z } : this.pos;
+            const st = this.world.addStructure(where, this.tribeColor, bt, this);
             this.energy -= spec.cost;
             if (bt === 'house' && !this.home) this.home = st; // first house = home
             this._buildTimer = 0;
@@ -343,24 +354,24 @@ export class Entity {
         break;
       }
       case 'FORTIFY': {
-        const wspec = CONFIG.structures.types.wall;
-        if (this.home && this.energy >= wspec.minEnergy && this._buildCooldown <= 0) {
-          // Raise a wall segment on the ring around home, on the threatened
-          // side. Repeated fortifying grows a perimeter — a palisade.
-          const dir = choice.threatDir ?? this._homeOutwardDir();
-          const wx = this.home.pos.x + dir.x * CONFIG.structures.wallRing;
-          const wz = this.home.pos.z + dir.z * CONFIG.structures.wallRing;
-          want = this.pos.distanceTo(new THREE.Vector3(wx, this.pos.y, wz)) > 2.5
-            ? this._moveToward({ x: wx, z: wz }, 'walk', dt)
+        // Build the next missing segment of the shared, connected wall ring
+        // (or a gateway slot) so the village ends up properly walled with
+        // gates at the corners rather than a scatter of stubs.
+        const anchor = choice.anchor ?? (this.home ? villageAnchor(this, this.world) : null);
+        const slot = anchor ? nextRingSlot(this.world, anchor, this.pos) : null;
+        const spec = slot ? CONFIG.structures.types[slot.type] : CONFIG.structures.types.wall;
+        if (slot && this.energy >= spec.minEnergy && this._buildCooldown <= 0) {
+          want = Math.hypot(this.pos.x - slot.x, this.pos.z - slot.z) > 2.5
+            ? this._moveToward(slot, 'walk', dt)
             : 'build';
           if (want === 'build') {
             this._buildTimer = (this._buildTimer ?? 0) + dt;
             if (this._buildTimer > 1.1) {
-              const facing = Math.atan2(dir.x, dir.z) + Math.PI / 2;
-              this.world.addStructure({ x: wx, z: wz, facing }, this.tribeColor, 'wall', this);
-              this.energy -= wspec.cost;
+              this.world.addStructure({ x: slot.x, z: slot.z, facing: slot.facing },
+                this.tribeColor, slot.type, this);
+              this.energy -= spec.cost;
               this._buildTimer = 0;
-              this._buildCooldown = 16;
+              this._buildCooldown = slot.type === 'gate' ? 18 : 14;
               this.memory.remember('fortified', tick, this.pos, 0.6);
             }
           }
@@ -494,6 +505,19 @@ export class Entity {
           }
         } else want = 'idle';
         break;
+      case 'PLAYER_MOVE': {
+        // Direct human steering. dir is a world-space XZ vector.
+        const dx = choice.dir?.x ?? 0;
+        const dz = choice.dir?.z ?? 0;
+        if (dx * dx + dz * dz > 1e-4) {
+          this.heading = Math.atan2(dx, dz);
+          const sp = choice.run ? CONFIG.entity.runSpeed : CONFIG.entity.walkSpeed;
+          this.vel.x = Math.sin(this.heading) * sp;
+          this.vel.z = Math.cos(this.heading) * sp;
+          want = choice.run ? 'run' : 'walk';
+        } else want = 'idle';
+        break;
+      }
       default:
         want = 'idle';
     }

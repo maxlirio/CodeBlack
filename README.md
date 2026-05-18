@@ -78,6 +78,25 @@ invention, and cultural diffusion.
   sequences stabilise into named, reusable **skills** that spread by imitation
   and inheritance — a tech tree no one wrote.
 
+## Camera & playing as a villager
+
+- The camera starts in **FREE CAM**: `WASD` glides over the world, `Q`/`E`
+  change height, drag to orbit, scroll to zoom.
+- **Click a villager** → the camera **follows** it. Pressing any movement
+  key drops back to free flight.
+- With a villager selected, hit **▶ PLAY AS THIS VILLAGER**. You take over:
+  `WASD` move · `Shift` run · `Space` attack/hunt · `B` build house ·
+  `G` build the next wall/gate segment · `F` plant · `C` craft a spear ·
+  `E` gather/eat/deposit · `Esc` (or Release) hands control back to the AI.
+  Your input flows through the *exact same* action code the AI uses.
+
+Villages are now organised: agents share a deterministic plan, so they
+build houses on tidy plots around a centre and raise a **connected wall
+ring with gates** instead of scattering stubs — and they strongly prefer
+building inside their own tribe's village (founding a lone outpost is
+possible but deliberately unattractive). Economy comes before military:
+a village raises its **granary** before it walls up.
+
 ## Run locally
 
 ```bash
@@ -120,6 +139,7 @@ The site goes live at `https://<your-user>.github.io/CodeBlack/`. The Vite
 | `src/personality.js` | Traits, inheritance, experiential drift |
 | `src/social.js` | Per-individual relationship ledger + signals |
 | `src/tribes.js` | Stable union-find tribes + emergent Era progression |
+| `src/village.js` | Shared deterministic town layout: wall ring, gates, house plots |
 | `src/decision.js` | Utility action scoring (the "mind") |
 | `src/skills.js` | Emergent invention + cultural diffusion |
 | `src/entity.js` | Agent integrating all systems per tick |

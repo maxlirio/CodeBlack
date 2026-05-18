@@ -20,9 +20,13 @@ export class Simulation {
     this.tickCount = 0;
     this.selected = null;
     this.acc = 0;
+    this.mode = 'free';          // 'free' (WASD) | 'follow' | 'play'
+    this.player = null;          // entity the human is controlling
+    this.keys = new Set();
     this._initRenderer();
     this._initScene();
     this._bindUI();
+    this._bindInput();
     this._last = performance.now();
     requestAnimationFrame(this._frame);
   }
@@ -51,6 +55,88 @@ export class Simulation {
 
     this.ray = new THREE.Raycaster();
     this.renderer.domElement.addEventListener('pointerdown', (e) => this._pick(e));
+  }
+
+  // WASD/QE free-fly until you click a villager (then the camera follows);
+  // pressing a movement key drops follow back to free flight.
+  _bindInput() {
+    const MOVE = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
+    addEventListener('keydown', (ev) => {
+      const k = ev.key.toLowerCase();
+      this.keys.add(k);
+      if (this.mode === 'follow' && MOVE.has(k)) this._setMode('free');
+      if (this.mode === 'play' && k === 'escape') this._exitPlay();
+      if (this.mode === 'play') ev.preventDefault();
+    });
+    addEventListener('keyup', (ev) => this.keys.delete(ev.key.toLowerCase()));
+    addEventListener('blur', () => this.keys.clear());
+  }
+
+  _setMode(mode) {
+    this.mode = mode;
+    const c = this.controls;
+    if (mode === 'free') {
+      c.enablePan = true; c.enabled = true; c.minDistance = 6; c.maxDistance = 240;
+    } else if (mode === 'follow') {
+      c.enablePan = false; c.enabled = true; c.minDistance = 6; c.maxDistance = 120;
+    } else if (mode === 'play') {
+      c.enablePan = false; c.enabled = true; c.minDistance = 5; c.maxDistance = 16;
+    }
+    this._syncModeUI();
+  }
+
+  _enterPlay() {
+    if (!this.selected || !this.selected.alive) return;
+    this.player = this.selected;
+    this.player.controller = (self, p) => this._playerChoice(self, p);
+    this._setMode('play');
+  }
+
+  _exitPlay() {
+    if (this.player) this.player.controller = null;
+    this.player = null;
+    this._setMode(this.selected && this.selected.alive ? 'follow' : 'free');
+  }
+
+  // Translate live keyboard state into the same choice objects the utility
+  // AI produces, so the agent executes player intent through identical code.
+  _playerChoice(self, p) {
+    const fwd = new THREE.Vector3();
+    this.camera.getWorldDirection(fwd);
+    fwd.y = 0; fwd.normalize();
+    const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
+    const K = this.keys;
+    const dir = new THREE.Vector3();
+    if (K.has('w') || K.has('arrowup')) dir.add(fwd);
+    if (K.has('s') || K.has('arrowdown')) dir.sub(fwd);
+    if (K.has('d') || K.has('arrowright')) dir.add(right);
+    if (K.has('a') || K.has('arrowleft')) dir.sub(right);
+
+    if (K.has(' ') || K.has('spacebar')) {
+      // Attack: nearest enemy agent, wolf, prey, or enemy structure.
+      const foe = p.entities.find((e) => !self.kin.has(e.entity.id) &&
+        e.entity.tribeId !== self.tribeId);
+      const wolf = p.animals.find((a) => a.animal.predator);
+      const prey = p.animals.find((a) => !a.animal.predator);
+      if (foe && foe.dist < 7) return { action: 'ATTACK', victim: foe.entity, target: foe.entity.pos };
+      if (wolf && wolf.dist < 9) return { action: 'DEFEND', victim: wolf.animal, target: wolf.animal.pos };
+      if (prey && prey.dist < 9) return { action: 'HUNT', animal: prey.animal, target: prey.animal.pos };
+      const es = p.structures.find(({ st }) => st.tribe != null && st.tribe !== self.tribeId);
+      if (es) return { action: 'RAID', struct: es.st, target: es.st.pos };
+    }
+    if (K.has('b')) return { action: 'BUILD', build: 'house' };
+    if (K.has('g')) return { action: 'FORTIFY' };
+    if (K.has('f')) return { action: 'FARM' };
+    if (K.has('c')) return { action: 'CRAFT' };
+    if (K.has('e')) {
+      const tr = p.trees[0];
+      const food = p.resources[0];
+      const store = p.structures.find(({ st }) => st.type === 'storehouse');
+      if (food && food.dist < CONFIG.entity.eatRadius) return { action: 'EAT', target: food.res.pos, food: food.res };
+      if (tr && tr.dist < 9) return { action: 'GATHER_WOOD', tree: tr.tree, target: tr.tree.pos };
+      if (store) return { action: 'STOCKPILE', store: store.st, target: store.st.pos };
+    }
+    return { action: 'PLAYER_MOVE', dir: { x: dir.x, z: dir.z }, run: K.has('shift') };
   }
 
   _initScene() {
@@ -115,9 +201,11 @@ export class Simulation {
     this.renderer.dispose();
     this.tickCount = 0;
     this.selected = null;
+    this.player = null;
     this.seed = (this.seed * 1664525 + 1013904223) >>> 0;
     this._initRenderer();
     this._initScene();
+    this._setMode('free');
   }
 
   _step(dt) {
@@ -150,13 +238,40 @@ export class Simulation {
     }
 
     for (const e of this.entities) e.render(rdt * (this.running ? this.speed : 1));
-    this.controls.update();
-    if (this.selected && this.selected.alive) {
-      this.controls.target.lerp(this.selected.pos, 0.08);
-    }
+    this._updateCamera(rdt);
     this.renderer.render(this.scene, this.camera);
     this._updateHUD();
   };
+
+  _updateCamera(rdt) {
+    if (this.mode === 'play') {
+      if (!this.player || !this.player.alive) { this._exitPlay(); }
+      else this.controls.target.lerp(this.player.pos, 0.25);
+    } else if (this.mode === 'follow') {
+      if (this.selected && this.selected.alive) this.controls.target.lerp(this.selected.pos, 0.1);
+      else this._setMode('free');
+    } else {
+      // Free flight: WASD slides the focus over the ground, QE changes height.
+      const K = this.keys;
+      const f = new THREE.Vector3();
+      this.camera.getWorldDirection(f); f.y = 0; f.normalize();
+      const r = new THREE.Vector3(f.z, 0, -f.x);
+      const spd = 60 * rdt;
+      const mv = new THREE.Vector3();
+      if (K.has('w') || K.has('arrowup')) mv.add(f);
+      if (K.has('s') || K.has('arrowdown')) mv.sub(f);
+      if (K.has('d') || K.has('arrowright')) mv.add(r);
+      if (K.has('a') || K.has('arrowleft')) mv.sub(r);
+      if (mv.lengthSq() > 0) {
+        mv.normalize().multiplyScalar(spd);
+        this.controls.target.add(mv);
+        this.camera.position.add(mv);
+      }
+      if (K.has('q')) this.camera.position.y += spd * 0.6;
+      if (K.has('e')) this.camera.position.y = Math.max(4, this.camera.position.y - spd * 0.6);
+    }
+    this.controls.update();
+  }
 
   _pick(ev) {
     const x = (ev.clientX / innerWidth) * 2 - 1;
@@ -167,7 +282,12 @@ export class Simulation {
     if (hit) {
       let o = hit.object;
       while (o && o.userData.entityId == null) o = o.parent;
-      this.selected = o ? this.entities.find((e) => e.id === o.userData.entityId) : null;
+      const ent = o ? this.entities.find((e) => e.id === o.userData.entityId) : null;
+      if (ent) {
+        this.selected = ent;
+        if (this.mode !== 'play') this._setMode('follow'); // click a villager → follow
+        this._syncModeUI();
+      }
     }
   }
 
@@ -192,7 +312,10 @@ export class Simulation {
       crops: document.getElementById('hud-crops'),
       armed: document.getElementById('hud-armed'),
       skills: document.getElementById('hud-skills'),
-      inspector: document.getElementById('inspector')
+      inspector: document.getElementById('inspector'),
+      modeTag: document.getElementById('mode-tag'),
+      playBtn: document.getElementById('play-btn'),
+      playHelp: document.getElementById('play-help')
     };
     const pause = document.getElementById('btn-pause');
     pause.onclick = () => { this.running = !this.running; pause.textContent = this.running ? 'Pause' : 'Resume'; };
@@ -202,6 +325,20 @@ export class Simulation {
       sp.textContent = `Speed: ${this.speed}x`;
     };
     document.getElementById('btn-reset').onclick = () => this.reset();
+    this.ui.playBtn.onclick = () => (this.mode === 'play' ? this._exitPlay() : this._enterPlay());
+    this._setMode('free');
+  }
+
+  _syncModeUI() {
+    const playing = this.mode === 'play';
+    const tag = { free: 'FREE CAM', follow: 'FOLLOWING', play: 'PLAYING' }[this.mode];
+    this.ui.modeTag.textContent = tag;
+    this.ui.modeTag.style.color = playing ? '#ff8aa0' : this.mode === 'follow' ? '#7fb2ff' : '#4fd28a';
+    this.ui.playHelp.style.display = playing ? 'block' : 'none';
+    const canPlay = !!(this.selected && this.selected.alive);
+    this.ui.playBtn.style.display = (playing || canPlay) ? 'block' : 'none';
+    this.ui.playBtn.textContent = playing ? '■ RELEASE CONTROL' : '▶ PLAY AS THIS VILLAGER';
+    this.ui.playBtn.classList.toggle('playing', playing);
   }
 
   _updateHUD() {
@@ -220,7 +357,7 @@ export class Simulation {
     this.ui.era.textContent = ROM[Math.max(1, ...tribes.map((t) => t.era ?? 1))] ?? 'I';
     let houses = 0, walls = 0, stores = 0, towers = 0, centres = 0, food = 0;
     for (const st of this.world.structures) {
-      if (st.type === 'wall') walls++;
+      if (st.type === 'wall' || st.type === 'gate') walls++;
       else if (st.type === 'storehouse') { stores++; food += st.store?.food ?? 0; }
       else if (st.type === 'tower') towers++;
       else if (st.type === 'center') centres++;
@@ -241,7 +378,7 @@ export class Simulation {
 
     const s = this.selected;
     if (!s || !s.alive) {
-      if (s && !s.alive) this.selected = null;
+      if (s && !s.alive) { this.selected = null; this._syncModeUI(); }
       this.ui.inspector.innerHTML =
         '<h3>No agent selected</h3><div class="hint">Click any humanoid to follow its mind.</div>';
       return;
@@ -252,8 +389,11 @@ export class Simulation {
     const sk = [...s.skills.skills.values()].map((x) => x.name).join(', ') || '—';
     const swatch = `#${s.tribeColor.getHexString()}`;
     const homeTxt = s.home ? (s.atHome() ? 'at home' : 'has home') : 'homeless';
+    const youTag = this.player === s
+      ? '<div style="color:#ff8aa0;font-weight:700">● YOU ARE CONTROLLING THIS VILLAGER</div>' : '';
     this.ui.inspector.innerHTML = `
       <h3>Agent #${s.id} · gen ${s.generation}</h3>
+      ${youTag}
       <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${swatch};vertical-align:middle"></span>
         tribe ${s.tribeId} · ${s.tribeSize} members · Era ${['','I','II','III','IV'][s.tribeEra] ?? 'I'}</div>
       <div>role <b style="color:#7fb2ff">${s.role()}</b> · family ${s.kin.size} kin · ${homeTxt}</div>

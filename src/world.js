@@ -218,6 +218,20 @@ export class World {
       merlon.position.y = 2.85;
       mesh.add(wall, merlon);
       radius = 2.1;
+    } else if (type === 'gate') {
+      // A gateway: two towers flanking an arch — the deliberate opening
+      // in the ring. Passable (not solid) so it reads as a city gate.
+      mesh.rotation.y = pos.facing ?? 0;
+      const post = (sx) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1.0, 3.4, 1.3),
+          new THREE.MeshStandardMaterial({ color: 0x6f6457, roughness: 0.95 }));
+        m.position.set(sx, 1.7, 0); m.castShadow = true; return m;
+      };
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.7, 1.3),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.8 }));
+      lintel.position.y = 3.2;
+      mesh.add(post(-1.6), post(1.6), lintel);
+      radius = 2.1;
     } else if (type === 'storehouse') {
       // A squat hut with a conical thatch + a stacked-crate "stockpile".
       const body = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.9, 1.8, 7),

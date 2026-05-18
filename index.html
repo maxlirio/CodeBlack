@@ -48,6 +48,24 @@
       #inspector .bar > i { display: block; height: 100%; background: #5b8bff; }
       #inspector .hint { color: #6f7c95; margin-top: 8px; font-size: 11px; }
       .legend { margin-top: 9px; color: #8b97b0; font-size: 11px; }
+      #mode-tag { color: #4fd28a; }
+
+      #play-btn {
+        position: fixed; top: 50%; right: 12px; transform: translateY(180px);
+        background: linear-gradient(180deg, #2f6bdd, #1f4fae);
+        border: 1px solid #7fb2ff; color: #fff; font: inherit; font-size: 12px;
+        font-weight: 700; letter-spacing: 0.04em; padding: 10px 14px;
+        border-radius: 8px; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      }
+      #play-btn:hover { background: linear-gradient(180deg, #3f7bef, #2a5fc0); }
+      #play-btn.playing { background: linear-gradient(180deg, #c23b54, #962c41); border-color: #ff8aa0; }
+
+      #play-help {
+        position: fixed; bottom: 56px; left: 50%; transform: translateX(-50%);
+        background: rgba(8, 12, 22, 0.85); border: 1px solid rgba(120,160,220,0.3);
+        border-radius: 8px; padding: 10px 16px; color: #cdd9ef; font-size: 12px;
+        line-height: 1.7; text-align: center; backdrop-filter: blur(6px);
+      }
     </style>
   </head>
   <body>
@@ -64,12 +82,21 @@
       <div>animals <b id="hud-animals">0</b> · wolves <b id="hud-wolves">0</b> · crops <b id="hud-crops">0</b></div>
       <div>armed <b id="hud-armed">0</b> · stockpiled food <b id="hud-food">0</b></div>
       <div>skills discovered <b id="hud-skills">0</b></div>
-      <div class="legend">Click an agent to inspect · drag to orbit · scroll to zoom</div>
+      <div class="legend"><b id="mode-tag">FREE CAM</b> · WASD move · QE height · drag orbit · click a villager to follow</div>
     </div>
 
     <div id="inspector">
       <h3>No agent selected</h3>
       <div class="hint">Click any humanoid to follow its mind.</div>
+    </div>
+
+    <button id="play-btn" style="display:none">▶ PLAY AS THIS VILLAGER</button>
+
+    <div id="play-help" style="display:none">
+      <b>You are this villager.</b><br />
+      WASD move · Shift run · Space attack/hunt<br />
+      B build house · G build wall/gate · F plant · C craft · E gather/eat<br />
+      <span style="color:#7fb2ff">Esc</span> or Release to hand back to the AI
     </div>
 
     <div id="controls">
