@@ -14,14 +14,19 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# Force any bundled Node 20 JS actions (e.g. upload-artifact inside
+# upload-pages-artifact) onto Node 24 ahead of GitHub's June 2026 cutover.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run build
