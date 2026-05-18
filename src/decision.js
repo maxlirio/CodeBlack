@@ -73,9 +73,9 @@ export function decide(self, p, tick, rng) {
     cand.push({ action, score: s, ...data });
   };
 
-  // --- Survival: energy ---
+  // --- Survival: foraging berries / harvesting crops / carcasses ---
   if (nearestRes && p.resources[0].dist < CONFIG.entity.eatRadius) {
-    add('EAT', 2.2 + deficit * 4, { target: nearestRes.pos });
+    add('EAT', 2.2 + deficit * 4, { target: nearestRes.pos, food: nearestRes });
   }
   if (nearestRes) {
     add('SEEK_RESOURCE', 0.5 + deficit * 3.4 - p.resources[0].dist * 0.02, { target: nearestRes.pos });
@@ -165,6 +165,43 @@ export function decide(self, p, tick, rng) {
         add('BUILD', 0.45 + t.sociability * 0.4 + self.memory.valenceOf('built_safe') * 0.5,
           { build: true });
       }
+    }
+  }
+
+  // --- Nature & technology: wood -> weapons -> hunting, and farming ---
+  const tree = p.trees[0];
+  const prey = p.animals[0];
+  const wantWeapon = !self.weapon || self.weaponDur <= 1;
+  const huntDrive = self.memory.valenceOf('hunted') + 0.2;
+
+  // Gather wood — mostly to craft a weapon, valued more if game is around.
+  if (tree && wantWeapon && self.wood < CONFIG.hunt.weaponWoodCost) {
+    add('GATHER_WOOD',
+      (0.5 + t.aggression * 0.7 + t.curiosity * 0.4 + huntDrive) * (prey ? 1.5 : 1) - danger,
+      { target: tree.tree.pos, tree: tree.tree });
+  }
+  // Craft a weapon once enough wood is on hand and it is safe to stop.
+  if (self.wood >= CONFIG.hunt.weaponWoodCost && wantWeapon &&
+      self.energy >= CONFIG.hunt.craftMinEnergy && self._buildCooldown <= 0) {
+    add('CRAFT', 1.4 + t.aggression * 0.8 + t.curiosity * 0.5 - danger * 0.5, { craft: true });
+  }
+  // Hunt: a feast, but bare-handed it usually fails — that gap is the
+  // selection pressure that makes weapon-making pay off.
+  if (prey && prey.dist < CONFIG.entity.perceptionRadius * 0.8) {
+    const armed = self.weapon ? 2.2 : 0.45;
+    add('HUNT',
+      (t.aggression * (0.7 + deficit) + t.riskTolerance * 0.5 + huntDrive) * armed - t.caution * 0.4,
+      { target: prey.animal.pos, animal: prey.animal });
+  }
+  // Farming: a settled, surplus activity that yields more than foraging and
+  // anchors agents to their village (food security -> bigger settlements).
+  if (hasHome && atHome && self.energy > CONFIG.family.reproEnergy && danger < 0.2 &&
+      self._buildCooldown <= 0) {
+    const cropsHere = self.world.crops.filter(
+      (c) => (c.pos.x - self.home.pos.x) ** 2 + (c.pos.z - self.home.pos.z) ** 2 < 24 ** 2).length;
+    if (cropsHere < 4) {
+      add('FARM', 0.7 + t.caution * 0.5 + t.sociability * 0.4 + self.memory.valenceOf('farmed'),
+        { farm: true });
     }
   }
 

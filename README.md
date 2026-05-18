@@ -15,6 +15,19 @@ invention, and cultural diffusion.
   facing visor. Animation (idle / walk / run / turn / interact / build /
   attack) is fully procedural limb rotation, blended smoothly and driven
   *only* by the current utility decision.
+- **Living nature, not "resources"** — low-poly conifers (stacked cones),
+  berry bushes, roaming animal herds (wedge-bodied quadrupeds that graze and
+  bolt when agents close in), and farmable crops that visibly grow from
+  sprout to golden grain. Everything is built from triangle primitives so it
+  reads as what it is.
+- **Emergent tech path** — agents start with no tools. Foraging berries is
+  subsistence; the real food is animals, but bare hands almost always fail.
+  Agents must *learn* to chop **wood** from trees, **craft a flint spear**
+  (which then appears in-hand and wears out), and **hunt** — a kill becomes a
+  carcass shared with nearby kin/tribe. Settled, well-fed agents **farm**
+  crops near home for surplus. None of this is scripted: it falls out of the
+  utility scores, reinforcement, and the invention system recombining the
+  `MOVE / GATHER / BUILD / SIGNAL / CRAFT / HUNT` primitives.
 - **Strict local perception** — limited radius + facing cone + structures
   occlude line of sight. No agent knows the global world state.
 - **Utility decisions** — each tick every candidate action is scored from
@@ -86,7 +99,8 @@ The site goes live at `https://<your-user>.github.io/CodeBlack/`. The Vite
 | File | Responsibility |
 |---|---|
 | `src/config.js` | All tuning constants + action/primitive vocabulary |
-| `src/world.js` | Procedural terrain, lighting, scarce resources, structures, LoS |
+| `src/world.js` | Procedural terrain, lighting, nature lifecycle, structures, LoS |
+| `src/nature.js` | Low-poly triangle trees/bushes/crops/animals/weapons + animal AI |
 | `src/humanoid.js` | Low-poly rig + procedural blended animation |
 | `src/perception.js` | Local radius + cone + occlusion sensing |
 | `src/memory.js` | Short-term decay + long-term reinforced memory |

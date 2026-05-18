@@ -123,7 +123,7 @@ export class Simulation {
   _step(dt) {
     this.tickCount++;
     this.world.tickNow = this.tickCount;
-    this.world.update(this.tickCount);
+    this.world.update(this.tickCount, this.entities, dt);
     for (const e of this.entities) e.tick(this.entities, this.tickCount, dt);
     this.evolution.maintain(this.entities);
     if (this.tickCount % CONFIG.tribe.recomputeTicks === 0) {
@@ -182,6 +182,9 @@ export class Simulation {
       biggest: document.getElementById('hud-biggest'),
       houses: document.getElementById('hud-houses'),
       walls: document.getElementById('hud-walls'),
+      animals: document.getElementById('hud-animals'),
+      crops: document.getElementById('hud-crops'),
+      armed: document.getElementById('hud-armed'),
       skills: document.getElementById('hud-skills'),
       inspector: document.getElementById('inspector')
     };
@@ -211,6 +214,9 @@ export class Simulation {
     for (const st of this.world.structures) st.type === 'wall' ? walls++ : houses++;
     this.ui.houses.textContent = houses;
     this.ui.walls.textContent = walls;
+    this.ui.animals.textContent = this.world.animals.length;
+    this.ui.crops.textContent = this.world.crops.length;
+    this.ui.armed.textContent = this.entities.filter((e) => e.alive && e.weapon).length;
     this.ui.skills.textContent = totalSkills.size;
 
     const s = this.selected;
@@ -233,6 +239,7 @@ export class Simulation {
       <div>family: ${s.kin.size} kin · ${homeTxt}</div>
       <div>energy</div>${bar(s.energy / CONFIG.entity.maxEnergy, s.energy < 30 ? '#ff6b6b' : '#4fd28a')}
       <div>action <b style="color:#7fb2ff">${s.action}</b> · anim ${s.animState}</div>
+      <div>${s.weapon ? `armed (spear ×${s.weaponDur})` : 'unarmed'} · wood ${s.wood}</div>
       <div style="margin-top:6px">aggression</div>${bar(t.aggression, '#ff7a59')}
       <div>curiosity</div>${bar(t.curiosity)}
       <div>caution</div>${bar(t.caution)}

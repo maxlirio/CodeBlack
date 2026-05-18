@@ -9,7 +9,7 @@ export function perceive(self, entities, world, tick) {
   const fx = Math.sin(self.heading);
   const fz = Math.cos(self.heading);
 
-  const out = { entities: [], resources: [], structures: [], signals: [] };
+  const out = { entities: [], resources: [], structures: [], signals: [], trees: [], animals: [] };
 
   for (const e of entities) {
     if (e === self || !e.alive) continue;
@@ -47,8 +47,24 @@ export function perceive(self, entities, world, tick) {
     if (d2 < R2) out.structures.push({ st, dist: Math.sqrt(d2) });
   }
 
+  for (const t of world.trees) {
+    if (t.wood <= 0) continue;
+    const d2 = (t.pos.x - self.pos.x) ** 2 + (t.pos.z - self.pos.z) ** 2;
+    if (d2 < R2) out.trees.push({ tree: t, dist: Math.sqrt(d2) });
+  }
+
+  for (const a of world.animals) {
+    if (!a.alive) continue;
+    const d2 = (a.pos.x - self.pos.x) ** 2 + (a.pos.z - self.pos.z) ** 2;
+    if (d2 > R2) continue;
+    if (world.blocksSight(self.pos.x, self.pos.z, a.pos.x, a.pos.z)) continue;
+    out.animals.push({ animal: a, dist: Math.sqrt(d2) });
+  }
+
   out.entities.sort((a, b) => a.dist - b.dist);
   out.resources.sort((a, b) => a.dist - b.dist);
   out.structures.sort((a, b) => a.dist - b.dist);
+  out.trees.sort((a, b) => a.dist - b.dist);
+  out.animals.sort((a, b) => a.dist - b.dist);
   return out;
 }

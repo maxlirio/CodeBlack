@@ -4,10 +4,29 @@ export const CONFIG = {
   world: {
     size: 120,            // half-extent of the square play field
     terrainSegments: 64,
-    terrainAmplitude: 6,
-    resourceCount: 70,     // intentionally scarce vs. population
-    resourceRegrowTicks: 900,
-    resourceEnergy: 34
+    terrainAmplitude: 6
+  },
+
+  nature: {
+    bushCount: 64,            // wild berry bushes — base forage, scarce
+    bushEnergy: 30,
+    bushRegrowTicks: 820,
+    forests: 7,               // tree clusters
+    treesPerForest: 9,
+    treeWood: 4,              // wood units per tree before it is depleted
+    treeRegrowTicks: 2600,
+    woodPerChop: 1,
+    herds: 5,
+    animalsPerHerd: 5,
+    animalEnergy: 78,         // food yielded by a kill (a feast — worth hunting)
+    animalHealth: 34,
+    animalSpeed: 5.6,
+    animalFleeRadius: 16,
+    animalWanderRadius: 30,
+    carcassExpireTicks: 700,
+    cropGrowTicks: 950,       // ticks from seed to harvest
+    cropEnergy: 52,           // harvest yield — farming beats foraging
+    cropPlantCost: 6          // energy spent planting a seed
   },
 
   population: {
@@ -37,7 +56,19 @@ export const CONFIG = {
     perceptionFov: Math.PI * 0.95,   // not omniscient: limited cone + radius
     signalRadius: 22,
     buildEnergyCost: 30,
-    buildMinEnergy: 62
+    buildMinEnergy: 62,
+    gatherRadius: 2.4,        // reach for chopping wood / harvesting crops
+    huntRadius: 2.4
+  },
+
+  hunt: {
+    weaponWoodCost: 3,        // wood needed to craft a weapon
+    weaponDurability: 6,      // kills before a weapon breaks
+    craftMinEnergy: 40,
+    unarmedDamage: 5,         // bare-handed: animals usually escape
+    armedDamage: 18,          // with a crafted weapon: hunting is viable
+    armedAttackBonus: 10,     // weapons also help in conflict between agents
+    shareRadius: 7            // kin/tribe nearby share a kill (cooperation)
   },
 
   home: {
@@ -121,9 +152,14 @@ export const ACTIONS = [
   'FORTIFY',
   'RETURN_HOME',
   'DEFEND',
+  'GATHER_WOOD',
+  'CRAFT',
+  'HUNT',
+  'FARM',
   'ATTACK'
 ];
 
-// Primitive vocabulary an agent starts with. Inventions are emergent
-// recombinations of these — never anything outside this set.
-export const PRIMITIVES = ['MOVE', 'GATHER', 'BUILD', 'SIGNAL'];
+// Primitive vocabulary an agent starts with. Inventions (e.g. weapons,
+// hunting parties, farming) are emergent recombinations of these —
+// never anything outside this set.
+export const PRIMITIVES = ['MOVE', 'GATHER', 'BUILD', 'SIGNAL', 'CRAFT', 'HUNT'];

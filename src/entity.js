@@ -8,6 +8,7 @@ import { randomTraits, driftTrait } from './personality.js';
 import { perceive } from './perception.js';
 import { decide } from './decision.js';
 import { createHumanoid, animateHumanoid } from './humanoid.js';
+import { makeWeapon } from './nature.js';
 
 let NEXT_ID = 1;
 
@@ -54,6 +55,12 @@ export class Entity {
     this.tribeColor = this.color;
     this.tribeSize = 1;
     this._lastReproTick = -99999;
+
+    // Tools & inventory — the basis of the wood -> weapon -> hunting tech.
+    this.wood = 0;
+    this.weapon = false;
+    this.weaponDur = 0;
+    this._weaponMesh = null;
 
     this.action = 'IDLE';
     this.animState = 'idle';
@@ -192,8 +199,8 @@ export class Entity {
       case 'EAT': {
         const r = p.resources[0];
         if (r && r.dist < CONFIG.entity.eatRadius && r.res.available) {
-          this.energy = clamp(this.energy + this.world.consumeResource(r.res, tick), 0, CONFIG.entity.maxEnergy);
-          this.memory.remember('ate', tick, r.res.pos, 1);
+          this.energy = clamp(this.energy + this.world.harvestFood(r.res, tick), 0, CONFIG.entity.maxEnergy);
+          this.memory.remember(r.res.kind === 'crop' ? 'farmed' : 'ate', tick, r.res.pos, 1);
           want = 'interact';
         } else want = 'idle';
         break;
@@ -227,7 +234,8 @@ export class Entity {
         if (v && v.alive) {
           const d = this.pos.distanceTo(v.pos);
           if (d < CONFIG.entity.attackRadius) {
-            v.damage(CONFIG.entity.attackDamage, this);
+            v.damage(this._meleeDamage(), this);
+            this._useWeapon();
             this.social.conflict(v.id);
             this.energy -= 4;
             this.memory.remember('attacked', tick, v.pos, v.energy <= 0 ? 0.7 : 0.1);
@@ -260,7 +268,8 @@ export class Entity {
         if (v && v.alive) {
           const d = this.pos.distanceTo(v.pos);
           if (d < CONFIG.entity.attackRadius) {
-            v.damage(CONFIG.entity.attackDamage, this);
+            v.damage(this._meleeDamage(), this);
+            this._useWeapon();
             this.social.conflict(v.id);
             this.energy -= 3;
             this.memory.remember('defended', tick, this.pos, 0.5);
@@ -306,6 +315,81 @@ export class Entity {
               this._buildCooldown = 7;
               this.memory.remember('fortified', tick, this.pos, 0.6);
             }
+          }
+        } else want = 'idle';
+        break;
+      case 'GATHER_WOOD': {
+        const tr = choice.tree;
+        if (tr && tr.wood > 0) {
+          if (this.pos.distanceTo(tr.pos) < CONFIG.entity.gatherRadius) {
+            this._workTimer = (this._workTimer ?? 0) + dt;
+            want = 'build'; // chopping uses the repetitive work cycle
+            if (this._workTimer > 0.9) {
+              this.wood += this.world.chopWood(tr, tick);
+              this._workTimer = 0;
+              this.memory.remember('gathered_wood', tick, tr.pos, 0.3);
+            }
+          } else want = this._moveToward(tr.pos, 'walk', dt);
+        } else want = 'idle';
+        break;
+      }
+      case 'CRAFT':
+        if (this.wood >= CONFIG.hunt.weaponWoodCost && this._buildCooldown <= 0) {
+          this._workTimer = (this._workTimer ?? 0) + dt;
+          want = 'interact';
+          if (this._workTimer > 1.5) {
+            this.wood -= CONFIG.hunt.weaponWoodCost;
+            this._equipWeapon();
+            this._workTimer = 0;
+            this._buildCooldown = 5;
+            this.memory.remember('crafted', tick, this.pos, 0.7);
+          }
+        } else want = 'idle';
+        break;
+      case 'HUNT': {
+        const a = choice.animal;
+        if (a && a.alive) {
+          const d = this.pos.distanceTo(a.pos);
+          if (d < CONFIG.entity.huntRadius) {
+            const dmg = this.weapon ? CONFIG.hunt.armedDamage : CONFIG.hunt.unarmedDamage;
+            const killed = a.hurt(dmg);
+            this._useWeapon();
+            this.energy -= 2;
+            want = 'attack';
+            if (killed) {
+              this.world.dropCarcass(a.pos);
+              this.memory.remember('hunted', tick, a.pos, 1);
+              // A successful kill is shared with kin/tribe nearby — the
+              // cooperative payoff that makes hunting parties worthwhile.
+              for (const { entity: e, dist } of p.entities) {
+                if (dist < CONFIG.hunt.shareRadius &&
+                    (this.kin.has(e.id) || e.tribeId === this.tribeId)) {
+                  e.energy = clamp(e.energy + 14, 0, CONFIG.entity.maxEnergy);
+                  this.social.cooperate(e.id);
+                  e.social.cooperate(this.id);
+                }
+              }
+            } else {
+              this.memory.remember('hunted', tick, a.pos, this.weapon ? 0.3 : -0.2);
+            }
+          } else want = this._moveToward(a.pos, 'run', dt);
+        } else want = 'idle';
+        break;
+      }
+      case 'FARM':
+        if (this._buildCooldown <= 0) {
+          this._workTimer = (this._workTimer ?? 0) + dt;
+          want = 'build';
+          if (this._workTimer > 1.3) {
+            const ang = this.rng.range(-Math.PI, Math.PI);
+            const r = 6 + this.rng.range(0, 6);
+            const base = this.home ? this.home.pos : this.pos;
+            this.world.plantCrop(base.x + Math.sin(ang) * r, base.z + Math.cos(ang) * r,
+              this.id, this.tribeId);
+            this.energy -= CONFIG.nature.cropPlantCost;
+            this._workTimer = 0;
+            this._buildCooldown = 6;
+            this.memory.remember('farmed', tick, this.pos, 0.6);
           }
         } else want = 'idle';
         break;
@@ -356,6 +440,29 @@ export class Entity {
     return { x: dx / l, z: dz / l };
   }
 
+  _equipWeapon() {
+    this.weapon = true;
+    this.weaponDur = CONFIG.hunt.weaponDurability;
+    if (!this._weaponMesh) {
+      this._weaponMesh = makeWeapon();
+      this._weaponMesh.position.set(0, -0.7, 0.12);
+      this.mesh.userData.rig.armR.add(this._weaponMesh);
+    }
+    this._weaponMesh.visible = true;
+  }
+
+  _useWeapon() {
+    if (!this.weapon) return;
+    if (--this.weaponDur <= 0) {           // tools wear out and must be remade
+      this.weapon = false;
+      if (this._weaponMesh) this._weaponMesh.visible = false;
+    }
+  }
+
+  _meleeDamage() {
+    return CONFIG.entity.attackDamage + (this.weapon ? CONFIG.hunt.armedAttackBonus : 0);
+  }
+
   _physics(dt) {
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
@@ -389,9 +496,15 @@ export class Entity {
     const { reinforce, punish, traitDrift, weightMin, weightMax } = CONFIG.learning;
 
     const homeSafe = (a === 'RETURN_HOME' || a === 'FORTIFY' || a === 'DEFEND') && this._dangerBefore > 0;
+    // Tech pays off later (a kill becomes a carcass eaten next), so reward
+    // the steps that lead there, not just immediate energy.
+    const huntWin = a === 'HUNT' && this.memory.valenceOf('hunted') > 0;
     let good = dE > 0.3 || a === 'EAT' || (a === 'FLEE' && this._dangerBefore > 0) || homeSafe ||
-      a === 'BUILD' && this._dangerBefore === 0;
-    let bad = (a !== 'IDLE' && a !== 'RETURN_HOME' && dE < -1.2) || (a === 'ATTACK' && this.energy < 25);
+      (a === 'BUILD' && this._dangerBefore === 0) || a === 'CRAFT' || huntWin ||
+      (a === 'GATHER_WOOD' && this.wood > 0) || (a === 'FARM');
+    let bad = (a !== 'IDLE' && a !== 'RETURN_HOME' && a !== 'CRAFT' && a !== 'FARM' && dE < -1.2) ||
+      (a === 'ATTACK' && this.energy < 25) ||
+      (a === 'HUNT' && !this.weapon && this.memory.valenceOf('hunted') < 0);
 
     if (good) {
       W[a] = clamp(W[a] + reinforce, weightMin, weightMax);
@@ -403,10 +516,16 @@ export class Entity {
       if (a === 'EXPLORE') driftTrait(this.traits, 'curiosity', +1, traitDrift);
       if (a === 'FLEE' || a === 'RETURN_HOME') driftTrait(this.traits, 'caution', +1, traitDrift);
       if (a === 'FORTIFY' || a === 'DEFEND') driftTrait(this.traits, 'loyalty', +1, traitDrift);
+      if (a === 'HUNT' || a === 'CRAFT') {
+        driftTrait(this.traits, 'aggression', +1, traitDrift * 0.6);
+        driftTrait(this.traits, 'curiosity', +1, traitDrift);
+      }
+      if (a === 'FARM') driftTrait(this.traits, 'caution', +1, traitDrift);
     } else if (bad) {
       W[a] = clamp(W[a] - punish, weightMin, weightMax);
       if (a === 'ATTACK') driftTrait(this.traits, 'aggression', -1, traitDrift);
       if (a === 'EXPLORE') driftTrait(this.traits, 'riskTolerance', -1, traitDrift);
+      if (a === 'HUNT') driftTrait(this.traits, 'caution', +1, traitDrift);
     }
   }
 

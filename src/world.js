@@ -1,16 +1,22 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
+import { makeTree, makeBush, makeCrop, setCropGrowth, Animal } from './nature.js';
 
-// Persistent physical world: procedurally generated terrain, scarce
-// regrowing resources, and player-built structures that endure and
-// reshape navigation/visibility.
+// Persistent physical world: procedurally generated terrain, living
+// nature (forests, berry bushes, farmable crops, roaming animal herds)
+// and agent-built structures that endure and reshape the world.
 export class World {
   constructor(scene, rng) {
     this.scene = scene;
     this.rng = rng;
     this.size = CONFIG.world.size;
-    this.resources = [];
+    this.foods = [];        // bushes, ripe crops, carcasses — anything edible
+    this.trees = [];        // wood sources
+    this.crops = [];        // growing (not yet edible) plots
+    this.animals = [];
     this.structures = [];
+    // Back-compat alias: older code referred to edible nodes as "resources".
+    this.resources = this.foods;
 
     // Two octaves of value-ish noise baked from the seeded RNG, so the
     // terrain is reproducible and height is cheap to sample analytically.
@@ -19,7 +25,7 @@ export class World {
 
     this._buildLighting();
     this._buildTerrain();
-    this._seedResources();
+    this._seedNature();
   }
 
   heightAt(x, z) {
@@ -67,29 +73,115 @@ export class World {
     this.scene.add(this.terrain);
   }
 
-  _seedResources() {
-    for (let i = 0; i < CONFIG.world.resourceCount; i++) this._spawnResource();
-  }
-
-  _spawnResource() {
+  _seedNature() {
+    const C = CONFIG.nature;
     const r = this.size * 0.92;
-    const x = this.rng.range(-r, r);
-    const z = this.rng.range(-r, r);
-    const y = this.heightAt(x, z);
-    const geo = new THREE.IcosahedronGeometry(0.7, 0);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x4fd28a, emissive: 0x123, roughness: 0.4 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y + 0.7, z);
-    mesh.castShadow = true;
-    this.scene.add(mesh);
-    this.resources.push({ pos: new THREE.Vector3(x, y + 0.7, z), mesh, available: true, regrowAt: 0 });
+    for (let i = 0; i < C.bushCount; i++) {
+      this._addBush(this.rng.range(-r, r), this.rng.range(-r, r));
+    }
+    for (let f = 0; f < C.forests; f++) {
+      const cx = this.rng.range(-r, r);
+      const cz = this.rng.range(-r, r);
+      for (let i = 0; i < C.treesPerForest; i++) {
+        this._addTree(cx + this.rng.range(-16, 16), cz + this.rng.range(-16, 16));
+      }
+    }
+    for (let h = 0; h < C.herds; h++) {
+      const cx = this.rng.range(-r, r);
+      const cz = this.rng.range(-r, r);
+      for (let i = 0; i < C.animalsPerHerd; i++) {
+        this.animals.push(new Animal(this, this.rng,
+          cx + this.rng.range(-8, 8), cz + this.rng.range(-8, 8), h));
+      }
+    }
   }
 
-  consumeResource(res, tick) {
-    res.available = false;
-    res.regrowAt = tick + CONFIG.world.resourceRegrowTicks;
-    res.mesh.visible = false;
-    return CONFIG.world.resourceEnergy;
+  _addBush(x, z) {
+    const y = this.heightAt(x, z);
+    const mesh = makeBush(this.rng);
+    mesh.position.set(x, y, z);
+    this.scene.add(mesh);
+    this.foods.push({ kind: 'bush', pos: new THREE.Vector3(x, y + 0.6, z), mesh,
+      available: true, regrowAt: 0, energy: CONFIG.nature.bushEnergy });
+  }
+
+  _addTree(x, z) {
+    const y = this.heightAt(x, z);
+    const mesh = makeTree(this.rng);
+    mesh.position.set(x, y, z);
+    this.scene.add(mesh);
+    this.trees.push({ pos: new THREE.Vector3(x, y, z), mesh,
+      wood: CONFIG.nature.treeWood, regrowAt: 0 });
+  }
+
+  // Harvest anything edible (bush / ripe crop / carcass). Bushes regrow;
+  // crops and carcasses are consumed for good.
+  harvestFood(node, tick) {
+    node.available = false;
+    if (node.kind === 'bush') {
+      node.regrowAt = tick + CONFIG.nature.bushRegrowTicks;
+      node.mesh.visible = false;
+    } else {
+      this.scene.remove(node.mesh);
+      const i = this.foods.indexOf(node);
+      if (i >= 0) this.foods.splice(i, 1);
+    }
+    return node.energy;
+  }
+
+  nearestFood(x, z) {
+    let best = null, bd = Infinity;
+    for (const f of this.foods) {
+      if (!f.available) continue;
+      const d = (f.pos.x - x) ** 2 + (f.pos.z - z) ** 2;
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best ? { node: best, dist: Math.sqrt(bd) } : null;
+  }
+
+  // Chop a tree for wood; depleted trees lose their crown and regrow later.
+  chopWood(tree, tick) {
+    if (tree.wood <= 0) return 0;
+    tree.wood -= 1;
+    if (tree.wood <= 0) {
+      tree.regrowAt = tick + CONFIG.nature.treeRegrowTicks;
+      for (const f of tree.mesh.userData.foliage) f.visible = false;
+    }
+    return CONFIG.nature.woodPerChop;
+  }
+
+  nearestTree(x, z) {
+    let best = null, bd = Infinity;
+    for (const t of this.trees) {
+      if (t.wood <= 0) continue;
+      const d = (t.pos.x - x) ** 2 + (t.pos.z - z) ** 2;
+      if (d < bd) { bd = d; best = t; }
+    }
+    return best ? { tree: best, dist: Math.sqrt(bd) } : null;
+  }
+
+  plantCrop(x, z, owner, tribe) {
+    const y = this.heightAt(x, z);
+    const mesh = makeCrop();
+    mesh.position.set(x, y, z);
+    this.scene.add(mesh);
+    this.crops.push({ pos: new THREE.Vector3(x, y, z), mesh, planted: this.tickNow ?? 0,
+      owner, tribe, energy: CONFIG.nature.cropEnergy });
+  }
+
+  // A felled animal becomes a short-lived carcass food node.
+  dropCarcass(pos) {
+    const y = this.heightAt(pos.x, pos.z);
+    const mesh = new THREE.Mesh(
+      new THREE.ConeGeometry(0.6, 0.5, 5),
+      this._carcassMat ??= new THREE.MeshStandardMaterial({ color: 0x7a4b3a, roughness: 0.9, flatShading: true })
+    );
+    mesh.rotation.x = Math.PI;
+    mesh.position.set(pos.x, y + 0.3, pos.z);
+    this.scene.add(mesh);
+    this.foods.push({ kind: 'carcass', pos: new THREE.Vector3(pos.x, y + 0.3, pos.z), mesh,
+      available: true, expireAt: (this.tickNow ?? 0) + CONFIG.nature.carcassExpireTicks,
+      energy: CONFIG.nature.animalEnergy });
   }
 
   // type: 'house' (a home anchor) or 'wall' (a solid fortification).
@@ -203,12 +295,73 @@ export class World {
     return false;
   }
 
-  update(tick) {
-    for (const res of this.resources) {
-      if (!res.available && tick >= res.regrowAt) {
-        res.available = true;
-        res.mesh.visible = true;
+  update(tick, entities, dt = 1 / CONFIG.sim.tickRate) {
+    const C = CONFIG.nature;
+    this.tickNow = tick;
+
+    // Berry bushes regrow on their cooldown.
+    for (const f of this.foods) {
+      if (f.kind === 'bush' && !f.available && tick >= f.regrowAt) {
+        f.available = true;
+        f.mesh.visible = true;
       }
     }
+    // Carcasses rot away if no one eats them.
+    for (let i = this.foods.length - 1; i >= 0; i--) {
+      const f = this.foods[i];
+      if (f.kind === 'carcass' && (!f.available || tick >= f.expireAt)) {
+        this.scene.remove(f.mesh);
+        this.foods.splice(i, 1);
+      }
+    }
+    // Felled forests grow back.
+    for (const t of this.trees) {
+      if (t.wood <= 0 && tick >= t.regrowAt) {
+        t.wood = C.treeWood;
+        for (const fol of t.mesh.userData.foliage) fol.visible = true;
+      }
+    }
+    // Crops ripen; a mature crop becomes an edible food node (a harvest).
+    for (let i = this.crops.length - 1; i >= 0; i--) {
+      const c = this.crops[i];
+      const g = Math.min(1, (tick - c.planted) / C.cropGrowTicks);
+      setCropGrowth(c.mesh, g);
+      if (g >= 1) {
+        this.crops.splice(i, 1);
+        this.foods.push({ kind: 'crop', pos: c.pos.clone().setY(c.pos.y + 0.6), mesh: c.mesh,
+          available: true, energy: c.energy, owner: c.owner, tribe: c.tribe });
+      }
+    }
+
+    // Animals: roam/flee locally, herds repopulate toward their target size.
+    for (const a of this.animals) {
+      if (!a.alive) continue;
+      let nd = Infinity, np = null;
+      for (const e of entities) {
+        if (!e.alive) continue;
+        const d = e.pos.distanceTo(a.pos);
+        if (d < nd) { nd = d; np = e.pos; }
+      }
+      a.update(dt, nd, np);
+    }
+    for (let i = this.animals.length - 1; i >= 0; i--) {
+      if (!this.animals[i].alive) { this.animals[i].remove(); this.animals.splice(i, 1); }
+    }
+    const target = C.herds * C.animalsPerHerd;
+    if (this.animals.length < target && this.rng.chance(0.02)) {
+      const r = this.size * 0.9;
+      this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
+        this.rng.int(0, C.herds - 1)));
+    }
+  }
+
+  nearestAnimal(x, z) {
+    let best = null, bd = Infinity;
+    for (const a of this.animals) {
+      if (!a.alive) continue;
+      const d = (a.pos.x - x) ** 2 + (a.pos.z - z) ** 2;
+      if (d < bd) { bd = d; best = a; }
+    }
+    return best ? { animal: best, dist: Math.sqrt(bd) } : null;
   }
 }
