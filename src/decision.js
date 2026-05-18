@@ -31,9 +31,12 @@ export function decide(self, p, tick, rng) {
     const ally = kin || sameTribe || self.social.isAlly(e.id);
     if (ally) { allyCount++; if (kin || sameTribe) kinNear++; if (!nearestAlly) nearestAlly = e; }
 
-    // Foreign tribes carry a baseline rivalry; kin/tribe never read as threat.
+    // Foreign tribes carry a baseline rivalry; an active blood feud between
+    // the two clans turns that into open, lethal hostility.
     const rivalry = !ally && e.tribeId !== self.tribeId ? CONFIG.tribe.rivalHostility : 0;
-    const hostile = rel.hostility + e.traits.aggression * 0.5 + rivalry;
+    const feud = ally ? 0
+      : Math.min(0.9, self.world.feud(self.tribeId, e.tribeId) * CONFIG.feud.hostility);
+    const hostile = rel.hostility + e.traits.aggression * 0.5 + rivalry + feud;
     if (!ally && hostile > 0.4) {
       danger += (1 - dist / CONFIG.entity.perceptionRadius) * hostile;
       if (!nearestThreat || dist < nearestThreat._d) { nearestThreat = e; nearestThreat._d = dist; }
@@ -42,6 +45,10 @@ export function decide(self, p, tick, rng) {
         if (hd < CONFIG.structures.wallRing * 1.6 && (!homeRaider || hd < homeRaider._hd)) {
           homeRaider = e; homeRaider._hd = hd;
         }
+      }
+      // Sworn enemies are struck even when not weaker — feuds mean war.
+      if (feud > 0.25 && (!weakTarget || dist < weakTarget._d)) {
+        weakTarget = e; weakTarget._d = dist;
       }
     }
     if (!nearestEntity) nearestEntity = e;
@@ -149,9 +156,13 @@ export function decide(self, p, tick, rng) {
     }
   }
 
-  // --- Aggression / conflict ---
+  // --- Aggression / conflict (incl. avenging the slain) ---
   if (weakTarget && weakTarget._d < CONFIG.entity.perceptionRadius * 0.45) {
-    const want = t.aggression * (0.8 + deficit) * (0.6 + t.riskTolerance) - t.caution * 0.5;
+    const grudge = self.world.feud(self.tribeId, weakTarget.tribeId);
+    const avenge = self.memory.recent('avenge', tick, 600) ? 1.3 : 0;
+    // Vendetta overrides caution: a feuding clan fights even when matched.
+    const want = (t.aggression * (0.8 + deficit) + grudge * 0.8 + avenge) *
+      (0.6 + t.riskTolerance) - t.caution * Math.max(0, 0.5 - grudge * 0.4);
     add('ATTACK', want * (weakTarget._d < CONFIG.entity.attackRadius ? 2.4 : 1.1),
       { target: weakTarget.pos, victim: weakTarget });
   }

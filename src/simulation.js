@@ -70,6 +70,22 @@ export class Simulation {
     });
     addEventListener('keyup', (ev) => this.keys.delete(ev.key.toLowerCase()));
     addEventListener('blur', () => this.keys.clear());
+
+    // Mouse-look while playing a villager (no drag needed — the camera
+    // follows the mouse), with sensible yaw/pitch limits.
+    this._camYaw = Math.PI;
+    this._camPitch = 0.42;
+    this._camDist = 9;
+    addEventListener('mousemove', (ev) => {
+      if (this.mode !== 'play') return;
+      this._camYaw -= (ev.movementX || 0) * 0.0035;
+      this._camPitch = Math.min(1.35, Math.max(0.12,
+        this._camPitch + (ev.movementY || 0) * 0.0028));
+    });
+    addEventListener('wheel', (ev) => {
+      if (this.mode !== 'play') return;
+      this._camDist = Math.min(16, Math.max(4, this._camDist + Math.sign(ev.deltaY)));
+    }, { passive: true });
   }
 
   _setMode(mode) {
@@ -80,7 +96,7 @@ export class Simulation {
     } else if (mode === 'follow') {
       c.enablePan = false; c.enabled = true; c.minDistance = 6; c.maxDistance = 120;
     } else if (mode === 'play') {
-      c.enablePan = false; c.enabled = true; c.minDistance = 5; c.maxDistance = 16;
+      c.enabled = false; // hand the camera to our collision-aware rig
     }
     this._syncModeUI();
   }
@@ -245,9 +261,11 @@ export class Simulation {
 
   _updateCamera(rdt) {
     if (this.mode === 'play') {
-      if (!this.player || !this.player.alive) { this._exitPlay(); }
-      else this.controls.target.lerp(this.player.pos, 0.25);
-    } else if (this.mode === 'follow') {
+      if (!this.player || !this.player.alive) { this._exitPlay(); return; }
+      this._playCamera();
+      return;
+    }
+    if (this.mode === 'follow') {
       if (this.selected && this.selected.alive) this.controls.target.lerp(this.selected.pos, 0.1);
       else this._setMode('free');
     } else {
@@ -271,6 +289,49 @@ export class Simulation {
       if (K.has('e')) this.camera.position.y = Math.max(4, this.camera.position.y - spd * 0.6);
     }
     this.controls.update();
+  }
+
+  // Over-the-shoulder rig: orbits with the mouse, and never ends up inside
+  // terrain or a building — it pulls in and lifts to keep the agent in view.
+  _playCamera() {
+    const p = this.player.pos;
+    const head = new THREE.Vector3(p.x, p.y + 1.8, p.z);
+    const cp = Math.cos(this._camPitch);
+    const dir = new THREE.Vector3(
+      Math.sin(this._camYaw) * cp,
+      Math.sin(this._camPitch),
+      Math.cos(this._camYaw) * cp
+    );
+    let dist = this._camDist;
+
+    // Cast from the agent's head outward; if a wall/tower/tree blocks the
+    // view, shorten the boom so we stay this side of it.
+    const occluders = [this.world.terrain,
+      ...this.world.structures.map((s) => s.mesh),
+      ...this.world.trees.map((t) => t.mesh)];
+    this._camRay ??= new THREE.Raycaster();
+    this._camRay.set(head, dir);
+    this._camRay.far = dist;
+    const hit = this._camRay.intersectObjects(occluders, true)[0];
+    if (hit) dist = Math.max(2.5, hit.distance - 0.6);
+
+    const cam = head.clone().addScaledVector(dir, dist);
+    // Never sink below the ground.
+    const gy = this.world.heightAt(cam.x, cam.z) + 1.4;
+    if (cam.y < gy) cam.y = gy;
+
+    this.camera.position.lerp(cam, 0.35);
+    this.camera.lookAt(head);
+
+    const s = this.player, ph = this.ui.ph;
+    ph.energy.textContent = Math.round(s.energy);
+    ph.wood.textContent = s.wood;
+    ph.weapon.textContent = s.weapon ? `spear ×${s.weaponDur}` : 'none';
+    ph.clan.textContent = `#${s.tribeId} (${s.tribeSize})`;
+    ph.clan.style.color = `#${s.tribeColor.getHexString()}`;
+    ph.era.textContent = ['', 'I', 'II', 'III', 'IV'][s.tribeEra] ?? 'I';
+    ph.role.textContent = s.role();
+    ph.kin.textContent = s.kin.size;
   }
 
   _pick(ev) {
@@ -315,7 +376,17 @@ export class Simulation {
       inspector: document.getElementById('inspector'),
       modeTag: document.getElementById('mode-tag'),
       playBtn: document.getElementById('play-btn'),
-      playHelp: document.getElementById('play-help')
+      playHelp: document.getElementById('play-help'),
+      playerHud: document.getElementById('player-hud'),
+      ph: {
+        energy: document.getElementById('ph-energy'),
+        wood: document.getElementById('ph-wood'),
+        weapon: document.getElementById('ph-weapon'),
+        clan: document.getElementById('ph-clan'),
+        era: document.getElementById('ph-era'),
+        role: document.getElementById('ph-role'),
+        kin: document.getElementById('ph-kin')
+      }
     };
     const pause = document.getElementById('btn-pause');
     pause.onclick = () => { this.running = !this.running; pause.textContent = this.running ? 'Pause' : 'Resume'; };
@@ -335,6 +406,7 @@ export class Simulation {
     this.ui.modeTag.textContent = tag;
     this.ui.modeTag.style.color = playing ? '#ff8aa0' : this.mode === 'follow' ? '#7fb2ff' : '#4fd28a';
     this.ui.playHelp.style.display = playing ? 'block' : 'none';
+    this.ui.playerHud.style.display = playing ? 'block' : 'none';
     const canPlay = !!(this.selected && this.selected.alive);
     this.ui.playBtn.style.display = (playing || canPlay) ? 'block' : 'none';
     this.ui.playBtn.textContent = playing ? '■ RELEASE CONTROL' : '▶ PLAY AS THIS VILLAGER';

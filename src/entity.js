@@ -136,7 +136,16 @@ export class Entity {
     // agent's strategy reproduced, which is what evolution should select for.
     this.fitness = this.age * 0.4 + this.energy * 0.15 + this.skills.skills.size * 4 +
       this.social.rel.size * 0.3 + this.kin.size * 2.5 + (this.home ? 6 : 0);
-    if (this.energy <= 0) this.die();
+    if (this.energy <= 0) {
+      // A recent attacker is the killer — igniting a blood feud between clans.
+      const killer = (this._killer && this._killer.alive &&
+        tick - (this._killerTick ?? -999) < 60) ? this._killer : null;
+      if (killer) {
+        this.world.registerKill?.(this, killer, entities);
+        killer.memory?.remember('killed', tick, this.pos, 0.5);
+      }
+      this.die();
+    }
   }
 
   // Resting at home recovers energy; an unhoused agent that wanders into a
@@ -670,6 +679,8 @@ export class Entity {
   damage(amount, from) {
     this.energy -= amount;
     if (from) {
+      this._killer = from;
+      this._killerTick = this.world.tickNow ?? 0;
       this.social.conflict(from.id);
       this.memory.remember('threat', this.world.tickNow ?? 0, from.pos, -1);
     }

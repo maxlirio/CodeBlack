@@ -1,10 +1,17 @@
 import { CONFIG } from './config.js';
 
 // Deterministic village layout. Every agent that shares a village anchor
-// computes the *same* wall ring, gate slots and house plots, so instead
-// of scattering structures they collectively raise an organised, walled
-// town. No coordinator — just shared geometry derived from the anchor.
+// computes the *same* plan, so instead of scattering structures they
+// collectively raise an organised, walled town. Each village's plan is
+// varied (size, gate count, orientation, plot ring) by a hash of its
+// anchor — a general ringed layout, but no two towns are identical.
 const WALL_LEN = 4.2; // must match the wall mesh length in world.js
+
+function hash(x, z) {
+  let h = (Math.round(x) * 73856093) ^ (Math.round(z) * 19349663);
+  h = Math.imul(h ^ (h >>> 13), 0x85ebca6b);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296; // 0..1
+}
 
 // A stable shared centre: the village's town centre if one exists nearby,
 // else the agent's home snapped to a coarse grid so neighbours agree.
@@ -22,13 +29,25 @@ export function villageAnchor(entity, world) {
   };
 }
 
+// Per-village parameters derived from its anchor — distinct but stable.
+export function villagePlan(anchor) {
+  const r = hash(anchor.x, anchor.z);
+  const r2 = hash(anchor.x + 7.3, anchor.z - 4.1);
+  const R = CONFIG.structures.wallRing * (0.85 + r * 0.6);   // ~11..18
+  const startA = r2 * Math.PI * 2;                            // ring rotation
+  const gates = 2 + Math.floor(r2 * 3);                       // 2..4 gateways
+  const plotR = R * (0.42 + r * 0.16);
+  const plotN = CONFIG.structures.maxHousesPerVillage + 1 + Math.floor(r * 3);
+  return { R, startA, gates, plotR, plotN };
+}
+
 export function wallRing(anchor) {
-  const R = CONFIG.structures.wallRing;
+  const { R, startA, gates } = villagePlan(anchor);
   const n = Math.max(12, Math.round((2 * Math.PI * R) / WALL_LEN));
-  const gateEvery = Math.max(4, Math.floor(n / 3)); // ~3 evenly-spaced gates
+  const gateEvery = Math.max(3, Math.floor(n / gates));
   const slots = [];
   for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
+    const a = startA + (i / n) * Math.PI * 2;
     slots.push({
       x: anchor.x + Math.sin(a) * R,
       z: anchor.z + Math.cos(a) * R,
@@ -40,12 +59,11 @@ export function wallRing(anchor) {
 }
 
 export function housePlots(anchor) {
-  const R = CONFIG.structures.wallRing * 0.5;
-  const n = CONFIG.structures.maxHousesPerVillage + 2;
+  const { startA, plotR, plotN } = villagePlan(anchor);
   const plots = [];
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2 + 0.3;
-    plots.push({ x: anchor.x + Math.sin(a) * R, z: anchor.z + Math.cos(a) * R });
+  for (let i = 0; i < plotN; i++) {
+    const a = startA * 0.5 + (i / plotN) * Math.PI * 2 + 0.3;
+    plots.push({ x: anchor.x + Math.sin(a) * plotR, z: anchor.z + Math.cos(a) * plotR });
   }
   return plots;
 }

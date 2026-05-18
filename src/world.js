@@ -15,6 +15,7 @@ export class World {
     this.crops = [];        // growing (not yet edible) plots
     this.animals = [];
     this.structures = [];
+    this.feuds = new Map();   // "tribeA|tribeB" -> hatred magnitude
     // Back-compat alias: older code referred to edible nodes as "resources".
     this.resources = this.foods;
 
@@ -404,8 +405,39 @@ export class World {
     return false;
   }
 
+  _feudKey(a, b) { return a < b ? `${a}|${b}` : `${b}|${a}`; }
+
+  feud(a, b) {
+    if (a == null || b == null || a === b) return 0;
+    return this.feuds.get(this._feudKey(a, b)) ?? 0;
+  }
+
+  // A slain villager enrages their whole clan against the killer's clan,
+  // and stokes any nearby kin who witness it — this is how feuds and
+  // revenge wars between tribes ignite and escalate.
+  registerKill(victim, killer, entities) {
+    if (!killer || killer.tribeId === victim.tribeId) return;
+    const k = this._feudKey(victim.tribeId, killer.tribeId);
+    this.feuds.set(k, (this.feuds.get(k) ?? 0) + CONFIG.feud.perKill);
+    for (const e of entities) {
+      if (!e.alive || e === killer) continue;
+      const sameClan = e.tribeId === victim.tribeId || e.familyId === victim.familyId;
+      if (sameClan && e.pos.distanceTo(victim.pos) < CONFIG.feud.avengeRadius) {
+        const r = e.social.get(killer.id);
+        r.hostility = Math.min(1, r.hostility + 0.5);
+        e.memory.remember('threat', this.tickNow ?? 0, killer.pos, -1);
+        e.memory.remember('avenge', this.tickNow ?? 0, victim.pos, -1);
+      }
+    }
+  }
+
   update(tick, entities, dt = 1 / CONFIG.sim.tickRate) {
     const C = CONFIG.nature;
+    // Grudges cool slowly; lasting peace must be re-earned with time.
+    for (const [k, v] of this.feuds) {
+      const nv = v - CONFIG.feud.decayPerTick;
+      if (nv <= 0.01) this.feuds.delete(k); else this.feuds.set(k, nv);
+    }
     this.tickNow = tick;
 
     // Berry bushes regrow on their cooldown.

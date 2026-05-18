@@ -60,6 +60,16 @@
       #play-btn:hover { background: linear-gradient(180deg, #3f7bef, #2a5fc0); }
       #play-btn.playing { background: linear-gradient(180deg, #c23b54, #962c41); border-color: #ff8aa0; }
 
+      #player-hud {
+        position: fixed; top: 50%; left: 12px; transform: translateY(-50%);
+        background: rgba(8, 12, 22, 0.82); border: 1px solid rgba(255,138,160,0.35);
+        border-radius: 8px; padding: 12px 14px; min-width: 170px;
+        color: #cdd9ef; font-size: 12px; backdrop-filter: blur(6px);
+      }
+      #player-hud .ph-row { display: flex; justify-content: space-between; gap: 16px; line-height: 1.7; }
+      #player-hud .ph-row span { color: #8b97b0; }
+      #player-hud .ph-row b { color: #ffd27f; }
+
       #play-help {
         position: fixed; bottom: 56px; left: 50%; transform: translateX(-50%);
         background: rgba(8, 12, 22, 0.85); border: 1px solid rgba(120,160,220,0.3);
@@ -91,6 +101,16 @@
     </div>
 
     <button id="play-btn" style="display:none">▶ PLAY AS THIS VILLAGER</button>
+
+    <div id="player-hud" style="display:none">
+      <div class="ph-row"><span>Energy</span><b id="ph-energy">0</b></div>
+      <div class="ph-row"><span>Wood</span><b id="ph-wood">0</b></div>
+      <div class="ph-row"><span>Weapon</span><b id="ph-weapon">none</b></div>
+      <div class="ph-row"><span>Clan</span><b id="ph-clan">—</b></div>
+      <div class="ph-row"><span>Era</span><b id="ph-era">I</b></div>
+      <div class="ph-row"><span>Role</span><b id="ph-role">—</b></div>
+      <div class="ph-row"><span>Kin</span><b id="ph-kin">0</b></div>
+    </div>
 
     <div id="play-help" style="display:none">
       <b>You are this villager.</b><br />

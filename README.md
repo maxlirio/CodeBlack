@@ -88,11 +88,21 @@ invention, and cultural diffusion.
   `WASD` move · `Shift` run · `Space` attack/hunt · `B` build house ·
   `G` build the next wall/gate segment · `F` plant · `C` craft a spear ·
   `E` gather/eat/deposit · `Esc` (or Release) hands control back to the AI.
-  Your input flows through the *exact same* action code the AI uses.
+  Your input flows through the *exact same* action code the AI uses. The
+  play camera follows your **mouse** (no dragging) and is collision-aware —
+  it pulls in and lifts so it never ends up inside terrain or a building.
+  A side panel shows your live materials (energy, wood, weapon, clan, era,
+  role, kin).
+
+Villagers can **kill each other**. When one is slain, their whole clan
+gains a lasting grudge against the killer's clan and nearby kin who
+witness it turn vengeful — so killings spiral into **blood feuds and
+revenge wars** between tribes that only cool slowly over time.
 
 Villages are now organised: agents share a deterministic plan, so they
 build houses on tidy plots around a centre and raise a **connected wall
-ring with gates** instead of scattering stubs — and they strongly prefer
+ring with gates** instead of scattering stubs (each town's size, gate
+count and orientation vary — a general layout, not a clone) — and they strongly prefer
 building inside their own tribe's village (founding a lone outpost is
 possible but deliberately unattractive). Economy comes before military:
 a village raises its **granary** before it walls up.

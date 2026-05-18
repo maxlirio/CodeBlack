@@ -137,6 +137,13 @@ export const CONFIG = {
     weaponBonusPerEra: 4      // sharper tools in later eras
   },
 
+  feud: {
+    perKill: 1.0,             // hatred a clan gains when one of theirs is slain
+    decayPerTick: 0.00035,    // grudges cool slowly over time
+    hostility: 0.5,           // how strongly feud translates into aggression
+    avengeRadius: 30          // a fresh killing enrages nearby kin/tribe
+  },
+
   predator: {
     packs: 2,
     perPack: 3,
