@@ -139,15 +139,21 @@ export const CONFIG = {
       storehouse: { cost: 18, minEnergy: 58, hp: 80,  solid: false },
       tower:      { cost: 22, minEnergy: 64, hp: 120, solid: true, era: 2 },
       center:     { cost: 26, minEnergy: 70, hp: 160, solid: false },
-      ram:        { cost: 14, minEnergy: 48, hp: 70,  solid: false }
+      ram:        { cost: 14, minEnergy: 46, hp: 70,  solid: false },
+      ballista:   { cost: 16, minEnergy: 50, hp: 55,  solid: false, era: 2 },
+      catapult:   { cost: 20, minEnergy: 56, hp: 60,  solid: false, era: 3 }
     }
   },
 
   war: {
     feudToSiege: 0.7,         // clan hatred at which siege engines appear
-    ramDamagePerTick: 1.6,    // a ram batters the nearest enemy structure
-    ramReach: 6,              // how close the ram works
-    siegeMinEnergy: 48,
+    siegeMinEnergy: 46,
+    ram:      { speed: 2.6, reach: 5,  dmg: 5.0 },               // rolls up & smashes
+    ballista: { range: 60, cooldown: 26, dmg: 9,  speed: 60 },   // anti-everything bolts
+    catapult: { range: 78, cooldown: 70, dmg: 26, splash: 7, speed: 30 }, // wrecks buildings
+    musterMin: 3,             // warriors gathered before a war band advances
+    musterRadius: 18,         // how tight the band forms up
+    retreatEnergy: 30,        // a bloodied warrior falls back
     captureEraReward: 4,      // era-progress the conqueror tribe gains
     captureEnergyReward: 28,  // morale/spoils for nearby victors
     convertChance: 0.6        // odds a leaderless survivor joins the conqueror

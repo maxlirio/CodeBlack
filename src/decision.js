@@ -298,24 +298,41 @@ export function decide(self, p, tick, rng) {
   // on the enemy even from afar, raid it, and raise rams to raze its
   // town centre and break the clan.
   const war = self.world.warTarget(self, CONFIG.feud.warThreshold);
-  if (war) {
+  // Tactics: muster into a war band before advancing, converge on the
+  // enemy CAPITAL together, raise era-appropriate siege engines, and a
+  // bloodied fighter falls back rather than dying alone.
+  if (war && self.energy > CONFIG.war.retreatEnergy) {
     const wf = self.world.feud(self.tribeId, war.st.tribe);
     const zeal = t.aggression * (0.8 + wf * 0.5) + t.loyalty * 0.5 - t.caution * 0.4;
-    if (self.energy > 40) {
-      // March on the foe — RAID handles closing the distance and the hit.
-      add('RAID', 0.7 + zeal, { target: war.st.pos, struct: war.st });
-      if (wf >= CONFIG.war.feudToSiege && self.wood >= 2 &&
-          self.energy >= CONFIG.war.siegeMinEnergy && self._buildCooldown <= 0) {
-        const tgt = war.centre ?? war.st;
-        add('SIEGE', 1.1 + zeal, { target: tgt.pos, struct: tgt });
-      }
+    const objective = war.centre ?? war.st;            // shared focus point
+    const banded = allyCount >= CONFIG.war.musterMin;  // war band assembled?
+    const era = self.tribeEra ?? 1;
+    const engine = era >= 3 ? 'catapult' : era >= 2 ? 'ballista' : 'ram';
+
+    // Muster is a *preference*, not a gate: a lone warrior near home will
+    // wait for the band, but the host still marches and sieges regardless.
+    if (!banded && self.home && self.pos.distanceTo(self.home.pos) < CONFIG.tribe.homeMergeDist) {
+      add('GROUP', 0.8 + zeal * 0.6 + t.loyalty,
+        { target: nearestAlly ? nearestAlly.pos : self.home.pos });
     }
+    add('RAID', 0.95 + zeal + (banded ? 0.5 : 0), { target: objective.pos, struct: objective });
+    if (wf >= CONFIG.war.feudToSiege &&
+        self.energy >= CONFIG.war.siegeMinEnergy && self._buildCooldown <= 0) {
+      add('SIEGE', 1.5 + zeal + (banded ? 0.5 : 0),
+        { target: objective.pos, struct: objective, engine });
+    }
+  } else if (war) {
+    // Hurt: pull back home to recover instead of feeding the enemy a kill.
+    if (self.home) add('RETURN_HOME', 1.4 + t.caution, { target: self.home.pos });
   }
-  // Local siege of a perceived enemy centre when already at war nearby.
-  if (grudge >= CONFIG.war.feudToSiege && enemyCentre && self.wood >= 2 &&
+  // Defensive siege: if a rival's centre is right here and we're at war,
+  // raise an engine on it regardless of muster.
+  if (grudge >= CONFIG.war.feudToSiege && enemyCentre &&
       self.energy >= CONFIG.war.siegeMinEnergy && self._buildCooldown <= 0) {
+    const era = self.tribeEra ?? 1;
     add('SIEGE', (1.0 + t.aggression + grudge * 0.5 + t.loyalty * 0.4) - t.caution * 0.3,
-      { target: enemyCentre.st.pos, struct: enemyCentre.st });
+      { target: enemyCentre.st.pos, struct: enemyCentre.st,
+        engine: era >= 3 ? 'catapult' : era >= 2 ? 'ballista' : 'ram' });
   }
 
   // --- Trade & diplomacy: peaceful clans run caravans for prosperity ---

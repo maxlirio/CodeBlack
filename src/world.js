@@ -399,6 +399,48 @@ export class World {
       mesh.add(beam, cap, roof);
       mesh.rotation.y = pos.facing ?? 0;
       radius = 1.8;
+    } else if (type === 'ballista') {
+      // A giant mounted crossbow on a swivel frame.
+      const base = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 1.6),
+        new THREE.MeshStandardMaterial({ color: 0x5a3d24, roughness: 0.9 }));
+      base.position.y = 0.4; base.castShadow = true;
+      const turret = new THREE.Group(); turret.position.y = 0.9;
+      const bow = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 3.0),
+        new THREE.MeshStandardMaterial({ color: 0x6b4a2f }));
+      bow.rotation.y = Math.PI / 2;
+      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.8, 4),
+        new THREE.MeshStandardMaterial({ color: 0x8d8576 }));
+      bolt.rotation.x = Math.PI / 2; bolt.position.set(0, 0.16, 0.4);
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 1.6),
+        new THREE.MeshStandardMaterial({ color: tribeColor }));
+      turret.add(bow, bolt, stock);
+      mesh.add(base, turret);
+      mesh.userData.turret = turret;
+      mesh.rotation.y = pos.facing ?? 0;
+      radius = 1.3;
+    } else if (type === 'catapult') {
+      // A counter-weighted throwing arm with a loaded bucket.
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.5, 2.4),
+        new THREE.MeshStandardMaterial({ color: 0x5a3d24, roughness: 0.9 }));
+      frame.position.y = 0.4; frame.castShadow = true;
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 3.4),
+        new THREE.MeshStandardMaterial({ color: 0x6b4a2f }));
+      arm.position.set(0, 1.4, 0); arm.rotation.x = -0.7;
+      const bucket = new THREE.Mesh(new THREE.IcosahedronGeometry(0.36, 0),
+        new THREE.MeshStandardMaterial({ color: 0x8d8576 }));
+      bucket.position.set(0, 2.4, -1.4);
+      const cw = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6),
+        new THREE.MeshStandardMaterial({ color: tribeColor }));
+      cw.position.set(0, 1.9, 1.3);
+      for (const sx of [-0.9, 0.9]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.8, 0.18),
+          new THREE.MeshStandardMaterial({ color: 0x5a3d24 }));
+        post.position.set(sx, 1.3, 0); mesh.add(post);
+      }
+      mesh.add(frame, arm, bucket, cw);
+      mesh.userData.arm = arm;
+      mesh.rotation.y = pos.facing ?? 0;
+      radius = 1.5;
     } else {
       const hgt = 2 + this.rng.range(0, 1.2);
       const body = new THREE.Mesh(
@@ -618,6 +660,102 @@ export class World {
     });
   }
 
+  _siegeOwner(s) {
+    return { tribeId: s.tribe, familyId: s._fam, id: s.owner, alive: true };
+  }
+
+  _nearestEnemyStruct(s, max) {
+    let best = null, bd = max * max;
+    for (const t of this.structures) {
+      if (t === s || t.tribe == null || t.tribe === s.tribe) continue;
+      if (t.type === 'ram' || t.type === 'ballista' || t.type === 'catapult') continue;
+      const wt = t.type === 'center' ? 0 : t.type === 'wall' || t.type === 'gate' ? 60 : 30;
+      const d = (t.pos.x - s.pos.x) ** 2 + (t.pos.z - s.pos.z) ** 2 + wt;
+      if (d < bd) { bd = d; best = t; }
+    }
+    return best;
+  }
+
+  // Siege engines act on their own: rams roll up and smash, ballistae
+  // snipe, catapults lob boulders that wreck buildings (with splash).
+  _updateSiege(dt, entities) {
+    const W = CONFIG.war;
+    for (const s of this.structures) {
+      if (s.type === 'ram') {
+        const t = this._nearestEnemyStruct(s, 999);
+        if (!t) continue;
+        const dx = t.pos.x - s.pos.x, dz = t.pos.z - s.pos.z;
+        const d = Math.hypot(dx, dz) || 1;
+        if (d > W.ram.reach) {
+          s.pos.x += (dx / d) * W.ram.speed * dt;       // wheel toward the wall
+          s.pos.z += (dz / d) * W.ram.speed * dt;
+          s.pos.y = this.heightAt(s.pos.x, s.pos.z);
+          s.mesh.position.copy(s.pos);
+          s.mesh.rotation.y = Math.atan2(dx, dz);
+        } else {
+          s.mesh.position.z = s.pos.z + Math.sin(this.tickNow * 0.4) * 0.3; // ramming
+          this.damageStructure(t, W.ram.dmg * dt * 20, this._siegeOwner(s));
+        }
+        continue;
+      }
+      if (s.type !== 'ballista' && s.type !== 'catapult') continue;
+      const cfg = W[s.type];
+      s._cd = (s._cd ?? 0) - 1;
+      let tgt = this._nearestEnemyStruct(s, cfg.range);
+      let tgtPos = tgt?.pos;
+      if (s.type === 'ballista' && entities) {        // ballistae also pick off troops
+        for (const e of entities) {
+          if (!e.alive || e.inside || e.tribeId === s.tribe) continue;
+          const d2 = (e.pos.x - s.pos.x) ** 2 + (e.pos.z - s.pos.z) ** 2;
+          if (d2 < cfg.range * cfg.range && (!tgtPos ||
+              d2 < (tgtPos.x - s.pos.x) ** 2 + (tgtPos.z - s.pos.z) ** 2)) {
+            tgt = e; tgtPos = e.pos;
+          }
+        }
+      }
+      if (!tgtPos) continue;
+      const face = Math.atan2(tgtPos.x - s.pos.x, tgtPos.z - s.pos.z);
+      if (s.mesh.userData.turret) s.mesh.userData.turret.rotation.y = face - (s.mesh.rotation.y);
+      if (s._cd > 0) continue;
+      s._cd = cfg.cooldown;
+      // Cosmetic shot for the spectacle.
+      this._siegeShot(new THREE.Vector3(s.pos.x, s.pos.y + 1.2, s.pos.z),
+        tgtPos, s.type === 'catapult' ? 'boulder' : 'bolt', cfg.speed);
+      if (tgt && tgt.hp != null) {                    // hit a structure
+        this.damageStructure(tgt, cfg.dmg, this._siegeOwner(s));
+        if (s.type === 'catapult') {                  // splash onto neighbours
+          for (const o of this.structures) {
+            if (o === tgt || o.tribe === s.tribe || o.tribe == null) continue;
+            if (Math.hypot(o.pos.x - tgt.pos.x, o.pos.z - tgt.pos.z) < cfg.splash) {
+              this.damageStructure(o, cfg.dmg * 0.4, this._siegeOwner(s));
+            }
+          }
+        }
+      } else if (tgt && tgt.damage) {                 // hit an agent
+        tgt.damage(cfg.dmg, this._siegeOwner(s));
+      }
+    }
+  }
+
+  // A purely visual arcing projectile (real damage is applied instantly).
+  _siegeShot(origin, target, kind, speed) {
+    const dx = target.x - origin.x, dz = target.z - origin.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const big = kind === 'boulder';
+    const mesh = new THREE.Mesh(
+      big ? new THREE.IcosahedronGeometry(0.4, 0)
+          : new THREE.CylinderGeometry(0.06, 0.06, 1.4, 4),
+      this._tipMat ??= new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.5 }));
+    mesh.position.copy(origin);
+    this.scene.add(mesh);
+    this.projectiles.push({
+      pos: origin.clone(),
+      vel: new THREE.Vector3((dx / d) * speed, speed * 0.34, (dz / d) * speed),
+      speed, dmg: 0, owner: null, kind, mesh, target: null, siege: true,
+      life: CONFIG.projectile.maxLifeTicks
+    });
+  }
+
   _updateProjectiles(dt, entities) {
     const P = CONFIG.projectile;
     const valid = (pr, t) => t && t.alive &&
@@ -625,6 +763,18 @@ export class World {
         pr.owner.kin?.has(t.id)));
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const pr = this.projectiles[i];
+      // Siege shells are cosmetic (damage was applied at launch): just
+      // arc, no homing, no collateral — vanish on landing.
+      if (pr.siege) {
+        pr.vel.y -= P.gravity * dt;
+        pr.pos.addScaledVector(pr.vel, dt);
+        pr.mesh.position.copy(pr.pos);
+        if (pr.kind === 'boulder') pr.mesh.rotation.x += dt * 6;
+        if (--pr.life <= 0 || pr.pos.y <= this.heightAt(pr.pos.x, pr.pos.z)) {
+          this.scene.remove(pr.mesh); this.projectiles.splice(i, 1);
+        }
+        continue;
+      }
       // Re-acquire the nearest valid quarry (beast or enemy) and curve
       // toward it — shots seek their mark so aiming isn't required.
       if (!valid(pr, pr.target)) {
@@ -703,7 +853,8 @@ export class World {
   warTarget(self, minFeud) {
     let best = null, bd = Infinity, centre = null, cd = Infinity;
     for (const st of this.structures) {
-      if (st.tribe == null || st.tribe === self.tribeId || st.type === 'ram') continue;
+      if (st.tribe == null || st.tribe === self.tribeId) continue;
+      if (st.type === 'ram' || st.type === 'ballista' || st.type === 'catapult') continue;
       if (this.feud(self.tribeId, st.tribe) < minFeud) continue;
       const d = (st.pos.x - self.pos.x) ** 2 + (st.pos.z - self.pos.z) ** 2;
       if (d < bd) { bd = d; best = st; }
@@ -866,20 +1017,7 @@ export class World {
     }
     if (tick % CONFIG.logistics.roadRecomputeTicks === 0) this.rebuildRoads();
 
-    // Siege rams grind down the nearest enemy structure they're parked at.
-    const W = CONFIG.war;
-    for (const ram of this.structures) {
-      if (ram.type !== 'ram') continue;
-      let tgt = null, td = W.ramReach;
-      for (const st of this.structures) {
-        if (st === ram || st.type === 'ram') continue;
-        if (st.tribe == null || st.tribe === ram.tribe) continue;
-        const d = Math.hypot(st.pos.x - ram.pos.x, st.pos.z - ram.pos.z);
-        if (d < td) { td = d; tgt = st; }
-      }
-      if (tgt) this.damageStructure(tgt, W.ramDamagePerTick, { tribeId: ram.tribe, familyId: ram._fam, id: ram.owner, alive: true });
-    }
-
+    this._updateSiege(dt, entities);
     this._updateProjectiles(dt, entities);
   }
 

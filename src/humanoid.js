@@ -10,6 +10,9 @@ export function createHumanoid(color) {
   const group = new THREE.Group();
   const skin = new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true });
   const dark = new THREE.MeshStandardMaterial({ color: 0x1c2333, roughness: 0.6 });
+  // Torso has its own material so a job outfit can recolour the tunic
+  // without changing the head/arms.
+  const tunic = new THREE.MeshStandardMaterial({ color, roughness: 0.75, flatShading: true });
 
   const part = (w, h, d, mat = skin) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -17,7 +20,7 @@ export function createHumanoid(color) {
     return m;
   };
 
-  const torso = part(0.7, 0.95, 0.42);
+  const torso = part(0.7, 0.95, 0.42, tunic);
   torso.position.y = 1.15;
   group.add(torso);
 
@@ -55,8 +58,62 @@ export function createHumanoid(color) {
 
   group.userData.rig = { torso, head, armL, armR, legL, legR };
   group.userData.flagMat = flagMat;
+  group.userData.mats = { skin, tunic, dark };
   group.userData.anim = { state: 'idle', blend: 0, phase: 0 };
   return group;
+}
+
+// Outfit by trade — readable at a glance. Recolours the tunic and swaps a
+// distinct headpiece (helmet, hood, straw hat…). Cheap to call; only
+// rebuilds when the role actually changes.
+const OUTFIT = {
+  Warrior:    { tunic: 0x6b7079, hat: 'helmet' },
+  Hunter:     { tunic: 0x3f5b35, hat: 'hood' },
+  Forager:    { tunic: 0xb98a4a, hat: null },
+  Farmer:     { tunic: 0xc7b27a, hat: 'straw' },
+  Builder:    { tunic: 0x7a5a36, hat: 'cap' },
+  Woodcutter: { tunic: 0x6e4b2c, hat: 'cap' },
+  Toolmaker:  { tunic: 0x8a8170, hat: 'cap' },
+  Keeper:     { tunic: 0x4a6a8a, hat: null },
+  Raider:     { tunic: 0x7a3a3a, hat: 'helmet' },
+  Diplomat:   { tunic: 0xb06ab0, hat: null },
+  Scout:      { tunic: 0x6a8f6a, hat: 'hood' }
+};
+
+export function applyRoleStyle(group, role) {
+  if (group.userData.role === role) return;
+  group.userData.role = role;
+  const o = OUTFIT[role] ?? OUTFIT.Forager;
+  group.userData.mats.tunic.color.setHex(o.tunic);
+
+  if (group.userData.hat) { group.remove(group.userData.hat); group.userData.hat = null; }
+  if (!o.hat) return;
+  let hat;
+  const M = (c, r = 0.6) => new THREE.MeshStandardMaterial({ color: c, roughness: r, flatShading: true });
+  if (o.hat === 'helmet') {
+    hat = new THREE.Group();
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.26, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), M(0x9aa0a8));
+    const crest = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.16, 0.34), M(0xb23b3b));
+    crest.position.y = 0.16;
+    hat.add(dome, crest);
+    hat.position.y = 2.06;
+  } else if (o.hat === 'hood') {
+    hat = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.42, 5), M(0x33402c));
+    hat.position.y = 2.12;
+  } else if (o.hat === 'straw') {
+    hat = new THREE.Group();
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.05, 8), M(0xd8c074));
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.18, 8), M(0xd8c074));
+    top.position.y = 0.1;
+    hat.add(brim, top);
+    hat.position.y = 2.04;
+  } else { // cap
+    hat = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.42), M(0x4a3a26));
+    hat.position.y = 2.05;
+  }
+  hat.traverse?.((m) => { m.castShadow = true; });
+  group.add(hat);
+  group.userData.hat = hat;
 }
 
 // dt in seconds; speed01 is current locomotion magnitude 0..1.

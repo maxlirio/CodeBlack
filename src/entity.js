@@ -7,7 +7,7 @@ import { SkillSystem } from './skills.js';
 import { randomTraits, driftTrait } from './personality.js';
 import { perceive } from './perception.js';
 import { decide } from './decision.js';
-import { createHumanoid, animateHumanoid } from './humanoid.js';
+import { createHumanoid, animateHumanoid, applyRoleStyle } from './humanoid.js';
 import { makeTool } from './nature.js';
 import { villageAnchor, nextRingSlot, nextHousePlot } from './village.js';
 
@@ -46,6 +46,7 @@ export class Entity {
     this.mesh.userData.groundY = this.pos.y;
     this.mesh.position.copy(this.pos);
     world.scene.add(this.mesh);
+    applyRoleStyle(this.mesh, this.role()); // dressed from birth
 
     // Family & territory.
     this.home = null;                       // a 'house' structure this agent lives at
@@ -148,6 +149,8 @@ export class Entity {
     // agent's strategy reproduced, which is what evolution should select for.
     this.fitness = this.age * 0.4 + this.energy * 0.15 + this.skills.skills.size * 4 +
       this.social.rel.size * 0.3 + this.kin.size * 2.5 + (this.home ? 6 : 0);
+    // Re-dress when the agent's learned vocation shifts (cheap, throttled).
+    if (tick % 32 === this.id % 32) applyRoleStyle(this.mesh, this.role());
     if (this.energy <= 0) {
       // A recent attacker is the killer — igniting a blood feud between clans.
       const killer = (this._killer && this._killer.alive &&
@@ -472,24 +475,27 @@ export class Entity {
         break;
       }
       case 'SIEGE': {
-        // Wheel a battering ram up to an enemy structure. Once parked it
-        // grinds the wall/centre down on its own (handled in world.update).
+        // Build an era-appropriate siege engine and aim it at the enemy.
+        // Rams need to be wheeled close; ballista/catapult deploy at range.
         const st = choice.struct;
-        const wspec = CONFIG.structures.types.ram;
-        if (st && this.world.structures.includes(st) && this.wood >= 2 &&
+        const engine = choice.engine ?? 'ram';
+        const wspec = CONFIG.structures.types[engine] ?? CONFIG.structures.types.ram;
+        const deployDist = engine === 'ram' ? CONFIG.war.ram.reach + 4
+          : CONFIG.war[engine].range * 0.75;
+        if (st && this.world.structures.includes(st) &&
             this.energy >= wspec.minEnergy && this._buildCooldown <= 0) {
           const dx = st.pos.x - this.pos.x, dz = st.pos.z - this.pos.z;
           const d = Math.hypot(dx, dz) || 1;
-          if (d > CONFIG.war.ramReach - 1) {
+          if (d > deployDist) {
             want = this._moveToward(st.pos, 'run', dt);
           } else {
             this._buildTimer = (this._buildTimer ?? 0) + dt;
             want = 'build';
             if (this._buildTimer > 1.6) {
               const facing = Math.atan2(dx, dz);
-              const rx = this.pos.x + (dx / d) * 1.5, rz = this.pos.z + (dz / d) * 1.5;
-              this.world.addStructure({ x: rx, z: rz, facing }, this.tribeColor, 'ram', this);
-              this.wood -= 2;
+              const off = engine === 'ram' ? 1.5 : 0;
+              const rx = this.pos.x + (dx / d) * off, rz = this.pos.z + (dz / d) * off;
+              this.world.addStructure({ x: rx, z: rz, facing }, this.tribeColor, engine, this);
               this.energy -= wspec.cost;
               this._buildTimer = 0;
               this._buildCooldown = 16;
