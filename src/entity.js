@@ -680,23 +680,21 @@ export class Entity {
         const live = (s) => s && this.world.structures.includes(s);
         if (!live(partner) || !live(home)) { want = 'idle'; break; }
         if (this.pos.distanceTo(partner.pos) > CONFIG.stockpile.storeRadius) {
-          want = this._moveToward(partner.pos, this._dangerBefore > 0 ? 'run' : 'walk', dt);
+          want = this._moveToward(partner.pos, 'run', dt); // press on with the caravan
         } else {
           // Goods carried as the trader's own surplus (the village fed them
           // for the journey). Partner clan profits, both build goodwill.
           // A horse-drawn wagon hauls far more than a person on foot.
-          const cap = CONFIG.trade.caravanFood *
+          // Arrived: the caravan delivers regardless of how worn the
+          // trader is (the village provisioned the goods, not their body).
+          const goods = CONFIG.trade.caravanFood *
             (this._mounted() ? CONFIG.logistics.wagonTradeBonus : 1);
-          const goods = Math.min(cap, this.energy - 45);
-          if (goods > 0) {
-            this.energy -= Math.min(goods, CONFIG.trade.caravanFood); // wagon eases the load
-            partner.store.food += goods * 0.5;
-            if (home.store) home.store.food += goods * 0.3;       // profit home
-            this.world.addBond(this.tribeId, partner.tribe, CONFIG.trade.bondPerTrade);
-            this.energy = clamp(this.energy + 8, 0, CONFIG.entity.maxEnergy);
-            this.memory.remember('traded', tick, partner.pos, 0.8);
-            this._tradeCd = tick + CONFIG.trade.cooldownTicks;
-          }
+          partner.store.food += goods * 0.5;
+          if (home.store) home.store.food += goods * 0.3;        // profit home
+          this.world.addBond(this.tribeId, partner.tribe, CONFIG.trade.bondPerTrade);
+          this.energy = clamp(this.energy + 12, 0, CONFIG.entity.maxEnergy); // fed at the market
+          this.memory.remember('traded', tick, partner.pos, 0.9);
+          this._tradeCd = tick + CONFIG.trade.cooldownTicks;
           want = 'interact';
         }
         break;

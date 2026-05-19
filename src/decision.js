@@ -94,8 +94,10 @@ export function decide(self, p, tick, rng) {
     // making progress (a stalled goal gets no bonus, so the agent breaks
     // out and tries something else instead of freezing).
     if (action === self.action && !self._stalled) s *= 1.22;
-    // Hunger is non-negotiable: well past commitment, getting fed wins.
-    if ((action === 'EAT' || action === 'SEEK_RESOURCE') && deficit > 0.4) {
+    // Hunger is non-negotiable: well past commitment, getting fed wins —
+    // unless we're mid-caravan and not yet desperate (let the trade land).
+    if ((action === 'EAT' || action === 'SEEK_RESOURCE') &&
+        deficit > 0.4 && !(self.action === 'TRADE' && deficit < 0.62)) {
       s *= 1 + (deficit - 0.4) * 3;
     }
     cand.push({ action, score: s, ...data });
@@ -350,12 +352,17 @@ export function decide(self, p, tick, rng) {
   }
 
   // --- Trade & diplomacy: peaceful clans run caravans for prosperity ---
-  if (!war && danger < 0.25 && self.energy > 62 &&
-      (self._tradeCd ?? 0) <= tick && t.aggression < 0.62) {
+  const onCaravan = self.action === 'TRADE';
+  if (!war && danger < 0.35 && t.aggression < 0.62 &&
+      (onCaravan || (self.energy > 50 && (self._tradeCd ?? 0) <= tick))) {
     const tp = self.world.tradePartner(self);
     if (tp) {
-      add('TRADE', 0.8 + t.sociability * 1.2 + (1 - t.aggression) * 0.5 +
-        self.memory.valenceOf('traded'), { target: tp.partner.pos, home: tp.home, partner: tp.partner });
+      // A peaceable, sociable soul becomes the caravaneer; once underway
+      // the run dominates so it actually reaches the far granary.
+      add('TRADE',
+        (onCaravan ? 4.5 : 2.0) + t.sociability * 1.4 + (1 - t.aggression) * 0.6 +
+          self.memory.valenceOf('traded'),
+        { target: tp.partner.pos, home: tp.home, partner: tp.partner });
     }
   }
 

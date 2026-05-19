@@ -203,38 +203,28 @@ export class World {
     const stores = this.structures.filter((s) => s.type === 'storehouse');
     const houses = this.structures.filter((s) => s.type === 'house');
     const links = [];
-    // Every storehouse is a hub: roads radiate to the centre and to the
-    // village's houses, so any settled village gets visible streets.
+    // Roads are paved by PLACE, not tribe tag (ids drift). Every granary
+    // is a hub with streets to its village's centre & nearest houses, and
+    // a trade road runs to any other granary within caravan range.
+    const VR = CONFIG.structures.villageRadius;
     const hubs = stores.length ? stores : centres;
     for (const h of hubs) {
       for (const c of centres) {
-        if (c.tribe === h.tribe && c !== h &&
-            Math.hypot(c.pos.x - h.pos.x, c.pos.z - h.pos.z) < L.roadMaxLen) links.push([h, c]);
-      }
-      let n = 0;
-      for (const ho of houses) {
-        if (ho.tribe !== h.tribe) continue;
-        if (Math.hypot(ho.pos.x - h.pos.x, ho.pos.z - h.pos.z) < CONFIG.structures.villageRadius) {
-          links.push([h, ho]); if (++n >= 6) break;
+        if (c !== h && Math.hypot(c.pos.x - h.pos.x, c.pos.z - h.pos.z) < VR * 1.6) {
+          links.push([h, c]);
         }
       }
+      const near = houses
+        .map((ho) => [ho, Math.hypot(ho.pos.x - h.pos.x, ho.pos.z - h.pos.z)])
+        .filter(([, d]) => d < VR)
+        .sort((a, b) => a[1] - b[1]);
+      for (let i = 0; i < Math.min(7, near.length); i++) links.push([h, near[i][0]]);
     }
+    // Inter-village trade roads between granaries (caravan routes).
     for (let i = 0; i < stores.length; i++) {
       for (let j = i + 1; j < stores.length; j++) {
         const a = stores[i], b = stores[j];
-        const d = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
-        if (d < L.roadMaxLen && (a.tribe === b.tribe || this.bond(a.tribe, b.tribe) > 0.4)) {
-          links.push([a, b]);
-        }
-      }
-    }
-    for (let i = 0; i < centres.length; i++) {
-      for (let j = i + 1; j < centres.length; j++) {
-        const a = centres[i], b = centres[j];
-        const d = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
-        if (d < L.roadMaxLen && (a.tribe === b.tribe || this.bond(a.tribe, b.tribe) > 0.4)) {
-          links.push([a, b]);
-        }
+        if (Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z) < L.roadMaxLen) links.push([a, b]);
       }
     }
     this.roadGroup.clear();
@@ -667,18 +657,26 @@ export class World {
 
   // A peaceful caravan opportunity: this agent's own village granary has
   // a surplus and there's a non-hostile other clan's granary in reach.
+  // Spatial, churn-proof: "home" hub = the granary nearest our home; a
+  // partner = a granary in a *different* settlement within caravan range
+  // that we're not at war with. (Tribe ids drift, so we go by place.)
   tradePartner(self) {
+    const here = self.home ? self.home.pos : self.pos;
     let home = null, hd = Infinity;
     for (const st of this.structures) {
-      if (st.type !== 'storehouse' || st.tribe !== self.tribeId) continue;
-      const d = (st.pos.x - self.pos.x) ** 2 + (st.pos.z - self.pos.z) ** 2;
-      if (d < hd) { hd = d; home = st; }   // our village needs a trade hub
+      if (st.type !== 'storehouse') continue;
+      const d = (st.pos.x - here.x) ** 2 + (st.pos.z - here.z) ** 2;
+      if (d < hd) { hd = d; home = st; }
     }
     if (!home) return null;
     let partner = null, pd = CONFIG.trade.range ** 2;
     for (const st of this.structures) {
-      if (st.type !== 'storehouse' || st.tribe == null || st.tribe === self.tribeId) continue;
-      if (this.feud(self.tribeId, st.tribe) >= CONFIG.feud.warThreshold) continue;
+      if (st === home || st.type !== 'storehouse') continue;
+      // Any granary a fair walk away (a supply run or inter-clan trade).
+      const sep = (st.pos.x - home.pos.x) ** 2 + (st.pos.z - home.pos.z) ** 2;
+      if (sep < 18 * 18) continue;
+      if (st.tribe != null && home.tribe != null &&
+          this.feud(home.tribe, st.tribe) >= CONFIG.feud.warThreshold) continue;
       const d = (st.pos.x - self.pos.x) ** 2 + (st.pos.z - self.pos.z) ** 2;
       if (d < pd) { pd = d; partner = st; }
     }
