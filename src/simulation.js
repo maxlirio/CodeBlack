@@ -199,24 +199,37 @@ export class Simulation {
     // built it, it flies your tribe's tag, OR its builder is a living
     // member of your tribe right now (tribe ids drift after captures, so
     // we trust the owner's *current* allegiance, not the frozen tag).
+    // Doors are open to all — you can walk into anyone's hall. But the
+    // owning tribe will recognise the trespass: see the invader-alarm
+    // posted below, which `decide()` reads to send their kin after you.
     const byId = new Map(this.entities.filter((e) => e.alive).map((e) => [e.id, e]));
     const mine = (st) => {
       if (st.owner === pl.id || pl.kin.has(st.owner) || st.tribe === pl.tribeId) return true;
       const o = byId.get(st.owner);
       return !!o && (o.tribeId === pl.tribeId || o.id === pl.id);
     };
+    // Whose hall is this, *right now*? Owner's current allegiance beats the
+    // frozen tag (post-capture buildings have stale `tribe`).
+    const ownerTribe = (st) => {
+      const o = byId.get(st.owner);
+      if (o && o.alive) return o.tribeId;
+      return st.tribe;
+    };
     let near = null, nd = 6;
     for (const st of this.world.structures) {
       if (st.type === 'wall' || st.type === 'gate' || st.type === 'ram') continue;
-      if (!mine(st)) continue;
       const d = Math.hypot(st.pos.x - pl.pos.x, st.pos.z - pl.pos.z);
       if (d < nd) { nd = d; near = st; }
     }
-    if (!near) { this._flash('Stand right next to one of your own tribe’s buildings, then press R.'); return; }
+    if (!near) { this._flash('Stand right next to a building, then press R.'); return; }
     if (near.type === 'tower') {
-      this.towerPerch = near;     // climb up — stay in the world, just high
+      // Climbing someone else's tower also raises the alarm.
+      if (!mine(near)) this._raiseInvaderAlarm(pl, near, ownerTribe(near));
+      this.towerPerch = near;
       this._syncModeUI();
-      this._flash('Climbed the watchtower. Look around · click/Space to shoot · R / Esc to come down.');
+      this._flash(mine(near)
+        ? 'Climbed the watchtower. Look around · click/Space to shoot · R / Esc to come down.'
+        : 'You scale a foreign tower — their tribe will come for you. R / Esc to descend.');
       return;
     }
     this.interior = new Interior(near, pl, this.world);
@@ -225,7 +238,12 @@ export class Simulation {
     this.ui.interiorKeys.textContent = `Inside the ${near.type}\nMouse looks · WASD walks\n\n${keys}\n\nR / Esc  Leave`;
     this.ui.interiorKeys.style.display = 'block';
     this._syncModeUI();
-    this._flash(`Entered ${near.type}.`);
+    if (!mine(near)) {
+      this._raiseInvaderAlarm(pl, near, ownerTribe(near));
+      this._flash(`You break into a foreign ${near.type}. Their kin will come — get out before they do.`);
+    } else {
+      this._flash(`Entered ${near.type}.`);
+    }
   }
 
   // Hop on / off a horse. ('D' is strafe, so mount/dismount is on H.)
@@ -258,6 +276,39 @@ export class Simulation {
     this.interior.dispose();
     this.interior = null;
     this._syncModeUI();
+  }
+
+  // Tell the world that this villager is trespassing in another tribe's
+  // hall. `decide()` reads `world.invaders` and sends the owners after
+  // them — see the INVADER block. The alarm keeps refreshing the foe's
+  // position even after they flee outside, so they don't escape free.
+  // The player is inside a hall they broke into; if any member of the
+  // owning tribe has closed the gap to the door, force them out so the
+  // fight resolves in the open. Returns false on friendly halls.
+  _huntersAtDoor() {
+    const pl = this.player, st = this.interior?.struct;
+    if (!st) return false;
+    const inv = this.world.invaders.find((i) => i.intruder === pl);
+    if (!inv) return false;
+    const r2 = 4.5 * 4.5;
+    for (const e of this.entities) {
+      if (!e.alive || e === pl) continue;
+      if (e.tribeId !== inv.tribeId) continue;
+      const dx = e.pos.x - st.pos.x, dz = e.pos.z - st.pos.z;
+      if (dx * dx + dz * dz < r2) return true;
+    }
+    return false;
+  }
+
+  _raiseInvaderAlarm(intruder, struct, tribeId) {
+    if (tribeId == null || tribeId === intruder.tribeId) return;
+    // Replace any existing call on this intruder so the timer resets.
+    this.world.invaders = this.world.invaders.filter((i) => i.intruder !== intruder);
+    this.world.invaders.push({
+      intruder, tribeId,
+      pos: { x: struct.pos.x, z: struct.pos.z },
+      until: this.tickCount + 900,    // ~ a full minute of hunt at 1x
+    });
   }
 
   // ---- Click-to-place building ----
@@ -547,11 +598,19 @@ export class Simulation {
     if (this.interior) {
       if (!this.player || !this.player.alive) { this._exitInterior(); this._exitPlay(); }
       else {
-        this.interior.update(rdt);
-        this._interiorCamera(rdt);
-        this.renderer.render(this.interior.scene, this.camera);
-        this._updateHUD();
-        return;
+        // If you broke into another tribe's hall, you can't hide there
+        // forever — once their kin reach the door, they drag you out
+        // and the fight happens in the open where they can swing.
+        if (this._huntersAtDoor()) {
+          this._exitInterior();
+          this._flash('They kicked the door in — fight or run!');
+        } else {
+          this.interior.update(rdt);
+          this._interiorCamera(rdt);
+          this.renderer.render(this.interior.scene, this.camera);
+          this._updateHUD();
+          return;
+        }
       }
     }
     if (this.towerPerch && (!this.player || !this.player.alive)) { this._exitInterior(); this._exitPlay(); }

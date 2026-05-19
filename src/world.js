@@ -24,6 +24,7 @@ export class World {
     this.feuds = new Map();   // "tribeA|tribeB" -> hatred magnitude
     this.bonds = new Map();   // "tribeA|tribeB" -> trade goodwill
     this.truces = new Map();  // "tribeA|tribeB" -> tick the truce expires
+    this.invaders = [];       // {intruder, tribeId, pos, until} — a foe is in our hall
     // Back-compat alias: older code referred to edible nodes as "resources".
     this.resources = this.foods;
 
@@ -1142,6 +1143,17 @@ export class World {
     for (const [k, v] of this.bonds) {
       const nv = v - CONFIG.trade.bondDecayPerTick;
       if (nv <= 0.01) this.bonds.delete(k); else this.bonds.set(k, nv);
+    }
+    // Intruders in our halls: drop the call once the foe is dead, has
+    // gone, or the alarm has run out; keep the position up to date so
+    // the defenders chase the right spot.
+    if (this.invaders.length) {
+      this.invaders = this.invaders.filter((inv) => {
+        if (!inv.intruder || !inv.intruder.alive) return false;
+        if (tick > inv.until) return false;
+        inv.pos = { x: inv.intruder.pos.x, z: inv.intruder.pos.z };
+        return true;
+      });
     }
 
     // Berry bushes regrow on their cooldown.

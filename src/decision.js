@@ -163,6 +163,23 @@ export function decide(self, p, tick, rng) {
         : { target: hp });           // no visible attacker yet — guard the house
     }
   }
+  // --- Trespass response: someone broke into one of our halls. Every
+  // member of our tribe drops what they're doing and converges to kill
+  // the intruder — scaled by how loyal, aggressive and ready-to-fight
+  // they are. The world keeps the position live, so the alarm chases
+  // the fleeing intruder even if they leave the building.
+  if (self.world.invaders && self.world.invaders.length) {
+    for (const inv of self.world.invaders) {
+      if (inv.tribeId !== self.tribeId) continue;
+      if (!inv.intruder || !inv.intruder.alive) continue;
+      const dx = inv.intruder.pos.x - p.x, dz = inv.intruder.pos.z - p.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > 120 * 120) continue;     // too far to respond
+      const rage = 3.0 + t.loyalty * 1.6 + t.aggression * 1.2 + (self.weapon ? 0.8 : 0)
+        - t.caution * 0.3;
+      add('DEFEND', rage, { victim: inv.intruder, target: inv.intruder.pos });
+    }
+  }
   // Wolf-slaying: an armed villager (or a pack of kin) hunts the wolf
   // down instead of fleeing forever — a kill drops a carcass too. Scaled
   // high enough to actually beat the FLEE urge.
@@ -206,7 +223,10 @@ export function decide(self, p, tick, rng) {
       const threatened = !!homeRaider || !!wolf ||
         self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks);
       if (threatened) add('FORTIFY', (0.8 + t.caution * 1.5 + t.loyalty + danger) * 1.1, {});
-      else if (hasGranary) add('FORTIFY', 0.22 + t.caution * 0.25 + t.loyalty * 0.2, {});
+      // Walls are cheap and civilised — a calm village still keeps ringing
+      // up even before its granary is up, so seeds without recent raids
+      // don't end up forever wall-less.
+      else add('FORTIFY', (hasGranary ? 0.62 : 0.42) + t.caution * 0.45 + t.loyalty * 0.3, {});
     }
   }
 

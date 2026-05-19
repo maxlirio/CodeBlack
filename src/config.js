@@ -161,8 +161,8 @@ export const CONFIG = {
     // meaningful goal without starving ordinary construction.
     types: {
       house:      { cost: 18, wood: 2, stone: 0, minEnergy: 58, hp: 60,  solid: false },
-      wall:       { cost: 8,  wood: 1, stone: 1, minEnergy: 32, hp: 90,  solid: true  },
-      gate:       { cost: 11, wood: 2, stone: 1, minEnergy: 38, hp: 100, solid: false },
+      wall:       { cost: 6,  wood: 1, stone: 0, minEnergy: 24, hp: 80,  solid: true  },
+      gate:       { cost: 9,  wood: 2, stone: 0, minEnergy: 32, hp: 100, solid: false },
       fence:      { cost: 5,  wood: 1, stone: 0, minEnergy: 24, hp: 30,  solid: true  },
       storehouse: { cost: 16, wood: 2, stone: 0, minEnergy: 54, hp: 80,  solid: false },
       tower:      { cost: 20, wood: 2, stone: 1, minEnergy: 60, hp: 120, solid: true, era: 2 },
