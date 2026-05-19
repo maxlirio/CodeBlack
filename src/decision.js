@@ -146,6 +146,23 @@ export function decide(self, p, tick, rng) {
     add('DEFEND', (t.loyalty * 1.4 + t.aggression + Math.min(1, kinNear * 0.4)) * (1 + danger),
       { victim: homeRaider, target: homeRaider.pos });
   }
+  // Defend your PROPERTY: if your own home is being attacked (an enemy
+  // at it, a wolf prowling it, or it's taking siege/raid damage) you
+  // rush back and fight for it — keep your house or lose it.
+  if (hasHome && self.world.structures.includes(self.home)) {
+    const hp = self.home.pos;
+    const hit = self.home._lastHit != null && (tick - self.home._lastHit) < 140;
+    const nearHome = (x) => x && (x.pos.x - hp.x) ** 2 + (x.pos.z - hp.z) ** 2 <
+      (CONFIG.structures.wallRing * 1.7) ** 2;
+    let foe = (homeRaider && nearHome(homeRaider)) ? homeRaider : null;
+    if (!foe && wolf && nearHome(wolf)) foe = wolf;
+    if (hit || foe) {
+      const zeal = 2.2 + t.loyalty * 1.6 + t.caution * 0.7 + Math.min(1.2, kinNear * 0.3);
+      add('DEFEND', zeal, foe
+        ? { victim: foe, target: foe.pos }
+        : { target: hp });           // no visible attacker yet — guard the house
+    }
+  }
   // Wolf-slaying: an armed villager (or a pack of kin) hunts the wolf
   // down instead of fleeing forever — a kill drops a carcass too. Scaled
   // high enough to actually beat the FLEE urge.

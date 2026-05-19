@@ -228,27 +228,40 @@ export class World {
       }
     }
     this.roadGroup.clear();
-    this._roadMat ??= new THREE.MeshStandardMaterial({ color: 0x7a6038, roughness: 1 });
+    // One continuous ribbon hugging the terrain — looks like a dirt path
+    // painted on the ground, not a chain of boxes. polygonOffset keeps it
+    // from z-fighting the grass beneath it.
+    this._roadMat ??= new THREE.MeshStandardMaterial({
+      color: 0x6f5836, roughness: 1, polygonOffset: true,
+      polygonOffsetFactor: -2, polygonOffsetUnits: -2
+    });
+    const pos = [];
+    const W = L.roadWidth;
     this.roads = links.map(([a, b]) => {
       const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
       const len = Math.hypot(dx, dz) || 1;
-      const yaw = Math.atan2(dx, dz);
-      // Lay the road as a chain of short tiles that each sit on the ground
-      // beneath them — a single long slab would sink under the hills.
-      const step = 3;
-      const n = Math.max(1, Math.round(len / step));
+      const px = (-dz / len) * W, pz = (dx / len) * W;   // perpendicular half-width
+      const n = Math.max(2, Math.round(len / 2.5));
+      let pL = null, pR = null;
       for (let s = 0; s <= n; s++) {
         const t = s / n;
-        const x = a.pos.x + dx * t, z = a.pos.z + dz * t;
-        const tile = new THREE.Mesh(
-          new THREE.BoxGeometry(L.roadWidth * 2, 0.12, step + 0.6), this._roadMat);
-        tile.position.set(x, this.heightAt(x, z) + 0.14, z);
-        tile.rotation.y = yaw;
-        tile.receiveShadow = true;
-        this.roadGroup.add(tile);
+        const cx = a.pos.x + dx * t, cz = a.pos.z + dz * t;
+        const lx = cx - px, lz = cz - pz, rx = cx + px, rz = cz + pz;
+        const L2 = [lx, this.heightAt(lx, lz) + 0.06, lz];
+        const R2 = [rx, this.heightAt(rx, rz) + 0.06, rz];
+        if (pL) pos.push(...pL, ...pR, ...R2, ...pL, ...R2, ...L2); // two tris
+        pL = L2; pR = R2;
       }
       return { ax: a.pos.x, az: a.pos.z, bx: b.pos.x, bz: b.pos.z, len2: len * len };
     });
+    if (pos.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.computeVertexNormals();
+      const ribbon = new THREE.Mesh(geo, this._roadMat);
+      ribbon.receiveShadow = true;
+      this.roadGroup.add(ribbon);
+    }
   }
 
   // Is this point on a paved road? (cheap point-to-segment test)
@@ -364,8 +377,11 @@ export class World {
   }
 
   // type: 'house' (a home anchor) or 'wall' (a solid fortification).
-  // tribeColor tints the roof/banner so settlements read like AoE players.
-  addStructure(pos, tribeColor, type = 'house', builder = null) {
+  // Structures are neutral timber/thatch — allegiance reads off the
+  // agents' banners, not the buildings. (3rd arg kept for call-site
+  // compatibility but no longer tints anything.)
+  addStructure(pos, _legacyColor, type = 'house', builder = null) {
+    const tribeColor = 0xb59a6a;            // neutral thatch/timber accent
     const y = this.heightAt(pos.x, pos.z);
     const mesh = new THREE.Group();
     mesh.position.set(pos.x, y, pos.z);
