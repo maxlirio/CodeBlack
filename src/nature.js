@@ -115,11 +115,21 @@ export function setCropGrowth(mesh, t) {
 export function makeTool(type) {
   const g = new THREE.Group();
   if (type === 'bow') {
-    const limb = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.035, 5, 9, Math.PI * 1.25), MAT.shaft);
-    const str = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.78, 3),
-      new THREE.MeshStandardMaterial({ color: 0xd9d2c0 }));
-    str.position.x = 0.18;
-    g.add(limb, str);
+    // A clean recurve: a half-circle wooden limb with a straight string
+    // chord and a nocked arrow.
+    const limb = new THREE.Mesh(
+      new THREE.TorusGeometry(0.5, 0.03, 6, 16, Math.PI), MAT.shaft);
+    limb.rotation.z = -Math.PI / 2;            // vertical "D" shape
+    const string = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.006, 0.006, 1.0, 3),
+      new THREE.MeshStandardMaterial({ color: 0xe8e0cc }));
+    // chord across the two limb tips (which sit at y = ±0.5)
+    const arrow = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.02, 0.8, 4), MAT.shaft);
+    arrow.rotation.z = Math.PI / 2; arrow.position.x = 0.3;
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 4), MAT.flint);
+    head.rotation.z = -Math.PI / 2; head.position.x = 0.72;
+    g.add(limb, string, arrow, head);
   } else if (type === 'sword') {
     const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 4), MAT.shaft);
     const guard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.06, 0.08), MAT.flint);

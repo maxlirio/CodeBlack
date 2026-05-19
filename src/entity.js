@@ -103,6 +103,7 @@ export class Entity {
   // A readable label for what this agent has *learned* to specialise in —
   // emergent, derived from its strongest learned weights, not assigned.
   role() {
+    if (this.inside && this.inside.type === 'tower') return 'Watchman';
     const W = this.learn.weights;
     const map = {
       HUNT: 'Hunter', GATHER_WOOD: 'Woodcutter', CRAFT: 'Toolmaker',
@@ -341,11 +342,15 @@ export class Entity {
         break;
       }
       case 'DEFEND': {
-        // Archers fall back to a nearby friendly tower and man it.
-        if (this._rangedReach() > 0) {
+        // Stand watch: fall back to a nearby friendly tower and man it
+        // (any villager can be a watchman — the tower provides the bow).
+        {
+          const VR = CONFIG.structures.villageRadius;
           const tw = this.world.nearestStructure(this.pos.x, this.pos.z, 'tower',
-            (s) => s.tribe === this.tribeId || this.kin.has(s.owner));
-          if (tw && tw.dist < 24) {
+            (s) => (this.home && (s.pos.x - this.home.pos.x) ** 2 +
+              (s.pos.z - this.home.pos.z) ** 2 < (VR * 1.8) ** 2) ||
+              s.tribe === this.tribeId || this.kin.has(s.owner));
+          if (tw && tw.dist < 26) {
             if (tw.dist > 2.4) { want = this._moveToward(tw.st.pos, 'run', dt); break; }
             this._enterBuilding(tw.st, tick, 0);
             want = 'idle';
@@ -869,9 +874,18 @@ export class Entity {
 
     if (st.type === 'tower') {
       this.mesh.visible = true;
-      this.mesh.position.set(st.pos.x, st.pos.y + 6.4, st.pos.z); // up on the deck
-      this.energy = clamp(this.energy - CONFIG.entity.energyDrainPerSecond * 0.4 * dt,
-        0, CONFIG.entity.maxEnergy);
+      this.mesh.position.set(st.pos.x, st.pos.y + 6.3, st.pos.z); // on the battlement
+      // The watch is provisioned from the village granary (food carried
+      // up to them), so a watchman holds their post instead of starving.
+      let net = -CONFIG.entity.energyDrainPerSecond * 0.4;
+      const gr = this.world.nearestStructure(st.pos.x, st.pos.z, 'storehouse',
+        (s) => s.store && s.store.food > 1);
+      if (gr && gr.dist < CONFIG.stockpile.feedRadius) {
+        const give = Math.min(2.4, gr.st.store.food / CONFIG.stockpile.feedCostPerEnergy);
+        net += give;
+        gr.st.store.food -= give * CONFIG.stockpile.feedCostPerEnergy * dt;
+      }
+      this.energy = clamp(this.energy + net * dt, 0, CONFIG.entity.maxEnergy);
       this._shootCd = Math.max(0, this._shootCd - 1);
       let foe = null, fd = 34;
       for (const a of this.world.animals) {
@@ -894,9 +908,9 @@ export class Entity {
           11 + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra, this, 'arrow', 44);
         this._shootCd = 22;
       }
-      // Stand down once it's been quiet for a while.
-      if (!foe) { this._insideUntil -= 1; if (this._insideUntil <= 0) this._leaveBuilding(); }
-      else this._insideUntil = 400;
+      // A posted watchman holds the tower — only steps down if the supply
+      // fails and they're starving (then they go find food themselves).
+      if (this.energy < 22) this._leaveBuilding();
       if (this.energy <= 0) this.die();
       return;
     }

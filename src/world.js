@@ -429,17 +429,34 @@ export class World {
       mesh.add(body, roof, crate);
       radius = 1.9;
     } else if (type === 'tower') {
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.3, 5.2, 6),
-        new THREE.MeshStandardMaterial({ color: 0x8d8576, roughness: 0.95 }));
-      shaft.position.y = 2.6; shaft.castShadow = true;
-      const crown = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.0, 0.8, 6),
-        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.8 }));
-      crown.position.y = 5.4;
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.4, 6),
-        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.7 }));
-      roof.position.y = 6.4;
-      mesh.add(shaft, crown, roof);
-      radius = 1.5;
+      // An open-top stone keep: square shaft + a crenellated battlement
+      // you can stand and walk on (no roof).
+      const stone = new THREE.MeshStandardMaterial({ color: 0x8d8576, roughness: 0.95 });
+      const shaft = new THREE.Mesh(new THREE.BoxGeometry(2.6, 6.0, 2.6), stone);
+      shaft.position.y = 3.0; shaft.castShadow = true; shaft.receiveShadow = true;
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.3, 3.0), stone);
+      deck.position.y = 6.1;
+      mesh.add(shaft, deck);
+      const accent = new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.8 });
+      for (let i = 0; i < 4; i++) {
+        for (const t of [-1, 0, 1]) {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.35),
+            i % 2 ? accent : stone);
+          const a = i * Math.PI / 2;
+          const off = t * 0.95;
+          m.position.set(Math.sin(a) * 1.5 + Math.cos(a) * off, 6.6,
+            Math.cos(a) * 1.5 - Math.sin(a) * off);
+          m.rotation.y = a;
+          mesh.add(m);
+        }
+      }
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 4),
+        new THREE.MeshStandardMaterial({ color: 0x3a2f22 }));
+      pole.position.set(1.1, 7.3, 1.1);
+      const flag = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.7, 3), accent);
+      flag.position.set(1.4, 7.6, 1.1); flag.rotation.z = -Math.PI / 2;
+      mesh.add(pole, flag);
+      radius = 1.6;
     } else if (type === 'center') {
       // Town centre: a broad platform with a tall banner totem — the heart
       // of a settlement, rally point and culture hub.
@@ -459,6 +476,16 @@ export class World {
         new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.6 }));
       flag.position.set(0.5, 6.6, 0); flag.rotation.z = -Math.PI / 2;
       mesh.add(base, hut, roof, pole, flag);
+      // A goal plaque beside the banner (skipped in headless/no-DOM).
+      if (typeof document !== 'undefined') {
+        const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
+        const tex = new THREE.CanvasTexture(cv);
+        const board = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.8),
+          new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+        board.position.set(0, 4.6, 1.36);
+        mesh.add(board);
+        mesh.userData.plaque = { cv, ctx: cv.getContext('2d'), tex };
+      }
       radius = 2.6;
     } else if (type === 'ram') {
       // A timber battering ram on a low frame — a mobile siege engine.
@@ -965,6 +992,80 @@ export class World {
     return this.bonds.get(this._feudKey(a, b)) ?? 0;
   }
 
+  _colorName(c) {
+    if (!c) return 'the foe';
+    const hsl = {}; c.getHSL(hsl);
+    if (hsl.l > 0.8) return 'the White';
+    if (hsl.l < 0.18) return 'the Black';
+    if (hsl.s < 0.2) return 'the Grey';
+    const h = hsl.h * 360;
+    const names = [[15, 'the Red'], [45, 'the Orange'], [70, 'the Yellow'],
+      [165, 'the Green'], [195, 'the Teal'], [255, 'the Blue'],
+      [290, 'the Violet'], [340, 'the Magenta'], [361, 'the Red']];
+    for (const [lim, nm] of names) if (h < lim) return nm;
+    return 'the foe';
+  }
+
+  // A short banner-plaque goal for a village (its town-centre tribe).
+  tribeGoal(tribeId, originPos = null) {
+    // Prefer the actual residents around a centre (tribe ids drift, so
+    // matching by place is far more reliable than by tag).
+    let ents;
+    if (originPos) {
+      ents = (this.entities || []).filter((e) => e.alive &&
+        (e.pos.x - originPos.x) ** 2 + (e.pos.z - originPos.z) ** 2 < 70 * 70);
+      if (ents.length) tribeId = ents[0].tribeId;
+    } else {
+      ents = (this.entities || []).filter((e) => e.alive && e.tribeId === tribeId);
+    }
+    if (!ents.length) return 'ENDURE';
+    // At war? name the enemy by colour.
+    let worst = 0, foeTribe = null;
+    for (const [k, v] of this.feuds) {
+      const [a, b] = k.split('|').map(Number);
+      if ((a === tribeId || b === tribeId) && v > worst) {
+        worst = v; foeTribe = a === tribeId ? b : a;
+      }
+    }
+    if (worst >= CONFIG.feud.warThreshold && foeTribe != null) {
+      const foe = (this.entities || []).find((e) => e.alive && e.tribeId === foeTribe);
+      return `DEFEAT ${this._colorName(foe?.tribeColor)}`;
+    }
+    const avgE = ents.reduce((s, e) => s + e.energy, 0) / ents.length;
+    if (avgE < 45) return 'GATHER FOOD';
+    let stores = 0, houses = 0;
+    for (const st of this.structures) {
+      if (st.tribe !== tribeId) continue;
+      if (st.type === 'storehouse') stores++;
+      else if (st.type === 'house') houses++;
+    }
+    if (stores === 0) return 'RAISE A GRANARY';
+    if (houses < ents.length / 3) return 'BUILD HOMES';
+    for (const v of this.bonds.values()) if (v > 0.5) return 'TRADE & PROSPER';
+    return 'THRIVE';
+  }
+
+  _refreshPlaques() {
+    for (const st of this.structures) {
+      if (st.type !== 'center' || !st.mesh.userData.plaque) continue;
+      const goal = this.tribeGoal(st.tribe, st.pos);
+      const pq = st.mesh.userData.plaque;
+      if (pq.text === goal) continue;
+      pq.text = goal;
+      const { ctx, cv, tex } = pq;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.fillStyle = 'rgba(20,16,8,0.82)';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.strokeStyle = '#d8b25a'; ctx.lineWidth = 4;
+      ctx.strokeRect(2, 2, cv.width - 4, cv.height - 4);
+      ctx.fillStyle = '#ffe7a8';
+      ctx.font = 'bold 30px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(goal, cv.width / 2, cv.height / 2 + 2);
+      tex.needsUpdate = true;
+    }
+  }
+
   addBond(a, b, amt) {
     if (a == null || b == null || a === b) return;
     const k = this._feudKey(a, b);
@@ -1159,6 +1260,7 @@ export class World {
       }
     }
 
+    if (tick % 150 === 0) this._refreshPlaques();
     this._updateSiege(dt, entities);
     this._updateProjectiles(dt, entities);
   }

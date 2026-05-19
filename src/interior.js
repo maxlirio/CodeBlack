@@ -134,13 +134,55 @@ export class Interior {
   }
 
   // Resolve a click on a prop. Returns a short feedback string.
+  // The plaque shown inside: keys -> what they do, by building type.
+  keyActions() {
+    if (this.type === 'storehouse') {
+      return [
+        { key: '1', kind: 'food', label: '1  Store / take food' },
+        { key: '2', kind: 'wood', label: '2  Store / take wood' }
+      ];
+    }
+    if (this.type === 'center') {
+      return [
+        { key: '1', kind: 'rally', label: '1  Raise the banner (rally clan)' },
+        { key: '2', kind: 'goal', label: '2  Read the village goal' }
+      ];
+    }
+    // house / fallback
+    return [
+      { key: '1', kind: 'talk', label: '1  Talk to a villager here' },
+      { key: '2', kind: 'rest', label: '2  Rest by the fire' }
+    ];
+  }
+
+  doKey(k) {
+    const a = this.keyActions().find((x) => x.key === k);
+    if (!a) return null;
+    if (a.kind === 'talk') {
+      const occ = [...this.occ.values()][0];
+      return this.interactKind({ kind: 'talk', entId: occ?.ent?.id });
+    }
+    return this.interactKind({ kind: a.kind });
+  }
+
   interact(obj) {
     let o = obj;
     while (o && !o.userData.action && o.parent) o = o.parent;
-    const act = o?.userData?.action;
+    if (!o?.userData?.action) return null;
+    return this.interactKind(o.userData.action);
+  }
+
+  interactKind(act) {
     if (!act) return null;
     const pl = this.player;
     const SP = CONFIG.stockpile;
+    if (act.kind === 'rest') {
+      pl.energy = clamp(pl.energy + 14, 0, CONFIG.entity.maxEnergy);
+      return 'You rest by the fire. Energy returns.';
+    }
+    if (act.kind === 'goal') {
+      return `Village goal: ${this.world.tribeGoal ? this.world.tribeGoal(pl.tribeId) : 'thrive'}.`;
+    }
 
     if (act.kind === 'food') {
       const store = this.struct.store;

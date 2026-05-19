@@ -156,6 +156,24 @@ export function decide(self, p, tick, rng) {
       1.0 + t.aggression * 1.3 + t.riskTolerance * 0.5 + armed + pack - t.caution * 0.4,
       { victim: wolf, target: wolf.pos });
   }
+  // Standing watch: an armed villager mans an unmanned friendly tower so
+  // the village always has a watchman on the battlements.
+  if (self.energy > 45 && self.home && (self.weapon || t.caution > 0.45 || t.loyalty > 0.5)) {
+    const VR = CONFIG.structures.villageRadius;
+    const tw = self.world.nearestStructure(self.pos.x, self.pos.z, 'tower',
+      (s) => (s.pos.x - self.home.pos.x) ** 2 + (s.pos.z - self.home.pos.z) ** 2 < (VR * 1.8) ** 2 ||
+        s.tribe === self.tribeId || self.kin.has(s.owner));
+    if (tw && tw.dist < 32) {
+      const manned = (self.world.entities || []).some(
+        (e) => e.alive && e.inside === tw.st);
+      if (!manned) {
+        // A loyal/cautious villager finds standing watch worthwhile —
+        // strong enough to beat idling/foraging when fed and unthreatened.
+        add('DEFEND', 2.4 + t.loyalty * 1.6 + t.caution * 0.8,
+          { target: tw.st.pos });   // entity DEFEND climbs the nearest tower
+      }
+    }
+  }
   // Fortify: extend the shared connected wall ring (entity picks the next
   // missing ring/gate slot). Urgent under threat; otherwise a steady civic
   // drive so an established town eventually walls itself with gates.
@@ -258,10 +276,13 @@ export function decide(self, p, tick, rng) {
       if (self.energy >= Sty.center.minEnergy && self.tribeSize >= 3 && have('center') < cap.center) {
         add('BUILD', 1.0 + t.sociability * 0.6 + t.loyalty * 0.4, { build: 'center', spot: plot });
       }
+      // An established village (has a centre) raises watchtowers as civic
+      // defence — no longer needs an active threat to bother.
       if ((self.tribeEra ?? 1) >= (Sty.tower.era ?? 2) && self.energy >= Sty.tower.minEnergy &&
-          (self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks) || wolf) &&
-          have('tower') < cap.tower) {
-        add('BUILD', 0.7 + t.caution * 0.8 + t.loyalty * 0.5, { build: 'tower', spot: plot });
+          have('center') > 0 && have('tower') < cap.tower) {
+        const urgent = self.memory.recent('threat', tick, CONFIG.tribe.fortifyThreatTicks) || wolf;
+        add('BUILD', (urgent ? 1.1 : 0.75) + t.caution * 0.7 + t.loyalty * 0.5,
+          { build: 'tower', spot: plot });
       }
       // Grow the village onto the next tidy plot when overcrowded for size.
       const needed = Math.ceil(self.tribeSize / CONFIG.structures.peoplePerHouse);

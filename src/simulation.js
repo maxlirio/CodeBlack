@@ -64,9 +64,9 @@ export class Simulation {
     el.addEventListener('pointermove', (e) => {
       this._mouseNDC.x = (e.clientX / innerWidth) * 2 - 1;
       this._mouseNDC.y = -(e.clientY / innerHeight) * 2 + 1;
-      // In world play / tower the mouse turns the head; indoors it is a
-      // free cursor for clicking objects (no camera spin, no hidden mouse).
-      if (this.mode === 'play' && !this.interior) {
+      // The mouse turns the head everywhere you're embodied — including
+      // inside a building (interactions are on number keys, not clicks).
+      if (this.mode === 'play') {
         this._camYaw -= (e.movementX || 0) * 0.0035;
         this._camPitch = Math.min(1.35, Math.max(0.12,
           this._camPitch + (e.movementY || 0) * 0.0028));
@@ -126,13 +126,18 @@ export class Simulation {
           else this._exitPlay();
         } else if (k === 'r' && fresh) {
           inside ? this._exitInterior() : this._enterInterior();
-        } else if (inside) { /* look/move only */ }
+        } else if (this.interior) {
+          // Indoors: mouse looks, WASD walks, number keys do the actions
+          // listed on the plaque.
+          if (fresh) { const m = this.interior.doKey(k); if (m) this._flash(m); }
+        } else if (this.towerPerch) { /* look/move only on the tower */ }
         else if (this._placing && ARROWS.has(k)) {
           // Arrow keys spin the structure you're positioning.
           this._buildRot += (k === 'arrowright' || k === 'arrowdown') ? -0.26 : 0.26;
         } else {
           if (BUILD_KEYS[k]) { this._buildSel = BUILD_KEYS[k]; if (this._placing) this._makeGhost(); }
           if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
+          if (k === 'h' && fresh) this._toggleMount();
           if (k === 'b' && fresh) this._togglePlacing();
           // Space = attack (same as a mouse click); auto ranged or melee.
           if (isSpace(k) && fresh && !this._placing) this._attackQueued = true;
@@ -216,11 +221,38 @@ export class Simulation {
     }
     this.interior = new Interior(near, pl, this.world);
     this._intPos = new THREE.Vector3(0, 0, this.interior.bound * 0.6);
+    const keys = this.interior.keyActions().map((a) => a.label).join('\n');
+    this.ui.interiorKeys.textContent = `Inside the ${near.type}\nMouse looks · WASD walks\n\n${keys}\n\nR / Esc  Leave`;
+    this.ui.interiorKeys.style.display = 'block';
     this._syncModeUI();
-    this._flash(`Entered ${near.type}. Mouse looks · click to use · R / Esc to leave.`);
+    this._flash(`Entered ${near.type}.`);
+  }
+
+  // Hop on / off a horse. ('D' is strafe, so mount/dismount is on H.)
+  _toggleMount() {
+    const pl = this.player;
+    if (!pl) return;
+    if (pl.mount) {
+      const m = pl.mount;
+      m.tamed = false; m.ownerEntity = null; pl.mount = null;
+      this._flash('Dismounted.');
+      return;
+    }
+    let best = null, bd = 36;
+    for (const a of this.world.animals) {
+      if (!a.alive || !a.horse) continue;
+      if (a.tamed && a.ownerEntity !== pl) continue;     // someone else's
+      const d = (a.pos.x - pl.pos.x) ** 2 + (a.pos.z - pl.pos.z) ** 2;
+      if (d < bd) { bd = d; best = a; }
+    }
+    if (best) {
+      best.tamed = true; best.ownerEntity = pl; pl.mount = best;
+      this._flash('Mounted — H to dismount.');
+    } else this._flash('No horse within reach.');
   }
 
   _exitInterior() {
+    this.ui.interiorKeys.style.display = 'none';
     if (this.towerPerch) { this.towerPerch = null; this._syncModeUI(); return; }
     if (!this.interior) return;
     this.interior.dispose();
@@ -449,6 +481,7 @@ export class Simulation {
 
   reset() {
     if (this.interior) { this.interior.dispose(); this.interior = null; }
+    this.ui.interiorKeys.style.display = 'none';
     this.towerPerch = null;
     this._placing = false; this._ghost = null; this._buildOrder = null;
     for (const e of this.entities) e.alive && e.die();
@@ -665,6 +698,7 @@ export class Simulation {
       pop: document.getElementById('hud-pop'),
       deaths: document.getElementById('hud-deaths'),
       births: document.getElementById('hud-births'),
+      villages: document.getElementById('hud-villages'),
       tribes: document.getElementById('hud-tribes'),
       biggest: document.getElementById('hud-biggest'),
       era: document.getElementById('hud-era'),
@@ -686,6 +720,7 @@ export class Simulation {
       playerHud: document.getElementById('player-hud'),
       crosshair: document.getElementById('crosshair'),
       interiorMsg: document.getElementById('interior-msg'),
+      interiorKeys: document.getElementById('interior-keys'),
       ph: {
         energy: document.getElementById('ph-energy'),
         wood: document.getElementById('ph-wood'),
@@ -743,6 +778,9 @@ export class Simulation {
     this.ui.deaths.textContent = this.evolution.deaths;
     this.ui.births.textContent = this.evolution.births;
     const tribes = this.tribes ?? [];
+    // A settlement only counts as a village once it has a town centre.
+    this.ui.villages.textContent =
+      this.world.structures.filter((s) => s.type === 'center').length;
     this.ui.tribes.textContent = tribes.length;
     this.ui.biggest.textContent = tribes[0]?.size ?? 0;
     const ROM = ['I', 'I', 'II', 'III', 'IV'];
