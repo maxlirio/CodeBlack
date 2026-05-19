@@ -793,10 +793,16 @@ export class World {
   // Launch an arrow / thrown spear. dir is a unit-ish heading; a little
   // upward arc is added so flight looks (and aims) like a real shot.
   spawnProjectile(origin, dir, dmg, owner, kind = 'arrow', speed = 40) {
-    const v = new THREE.Vector3(dir.x, 0, dir.z);
+    // Two aim modes: a flat XZ vector gets the classic upward launch arc;
+    // a true 3D vector (with .y supplied) is used as-is so the shooter
+    // can aim straight down off a tower or up at a moving target.
+    const flat = (dir.y == null);
+    const v = flat
+      ? new THREE.Vector3(dir.x, 0, dir.z)
+      : new THREE.Vector3(dir.x, dir.y, dir.z);
     if (v.lengthSq() < 1e-5) return;
     v.normalize().multiplyScalar(speed);
-    v.y = speed * 0.16; // launch arc
+    if (flat) v.y = speed * 0.16;     // legacy ground-shooter arc
     const long = kind === 'spear';
     const mesh = new THREE.Group();
     const shaft = new THREE.Mesh(

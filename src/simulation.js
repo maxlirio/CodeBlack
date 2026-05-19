@@ -25,6 +25,7 @@ export class Simulation {
     this.player = null;          // entity the human is controlling
     this.keys = new Set();
     this._attackQueued = false;  // a click / Space press waiting to resolve
+    this._towerShotAt = -999;    // last tick a tower arrow was loosed
     this._placing = false;       // build-placement ghost active
     this._ghost = null;
     this._buildOrder = null;
@@ -282,6 +283,29 @@ export class Simulation {
   // hall. `decide()` reads `world.invaders` and sends the owners after
   // them — see the INVADER block. The alarm keeps refreshing the foe's
   // position even after they flee outside, so they don't escape free.
+  // Loose an arrow from atop the perched tower in the camera's exact
+  // aim. Spawns at battlement height + 0.6 so the shot clears the
+  // merlons; era-scaled damage; modest cooldown so you can't spam.
+  _fireFromTower() {
+    const s = this.towerPerch;
+    if (!s) return;
+    if (this.tickCount - this._towerShotAt < 12) return;   // ~0.4s @1x
+    this._towerShotAt = this.tickCount;
+    const f = new THREE.Vector3();
+    this.camera.getWorldDirection(f);                       // includes Y
+    if (f.lengthSq() < 1e-4) return;
+    f.normalize();
+    const origin = new THREE.Vector3(
+      s.pos.x + f.x * 0.6,
+      s.pos.y + 7.6,                                        // above merlons
+      s.pos.z + f.z * 0.6,
+    );
+    const era = this.player ? this.player.tribeEra : 1;
+    const dmg = 13 + (era - 1) * CONFIG.era.weaponBonusPerEra;
+    this.world.spawnProjectile(origin, { x: f.x, y: f.y, z: f.z },
+      dmg, this.player, 'arrow', 48);
+  }
+
   // The player is inside a hall they broke into; if any member of the
   // owning tribe has closed the gap to the door, force them out so the
   // fight resolves in the open. Returns false on friendly halls.
@@ -391,12 +415,12 @@ export class Simulation {
   _playerChoice(self, p) {
     // Inside a building, or perched up the tower, the body stays put.
     if (this.interior || this.towerPerch) {
-      // From the tower you can still shoot down at the field below.
-      if (this.towerPerch && this._attackQueued && (self._rangedReach?.() ?? 0) > 0) {
+      // From the tower you've got tower arrows on hand — no bow needed.
+      // Shots leave from the battlement top in the camera's exact aim
+      // direction so they clear the merlons and can angle steeply down.
+      if (this.towerPerch && this._attackQueued) {
         this._attackQueued = false;
-        const f = new THREE.Vector3();
-        this.camera.getWorldDirection(f);
-        return { action: 'SHOOT', aim: { x: f.x, z: f.z }, power: 1 };
+        this._fireFromTower();
       }
       this._attackQueued = false;
       return { action: 'IDLE' };
@@ -627,7 +651,10 @@ export class Simulation {
     const s = this.towerPerch;
     if (!this.world.structures.includes(s)) { this._exitInterior(); return; }
     const yaw = this._camYaw, pitch = this._camPitch;
-    const eye = new THREE.Vector3(s.pos.x, s.pos.y + 7.2, s.pos.z);
+    // Sit the eye above the merlons (their tops reach ~y+6.95) so the
+    // crenellations frame the view without ever blocking the gaze, and
+    // looking down still clears them.
+    const eye = new THREE.Vector3(s.pos.x, s.pos.y + 8.8, s.pos.z);
     this.camera.position.lerp(eye, 0.4);
     const cp = Math.cos(pitch);
     this.camera.lookAt(
