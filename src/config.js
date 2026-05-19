@@ -148,17 +148,19 @@ export const CONFIG = {
     // into endless construction (which was starving reproduction).
     maxPerVillage: { storehouse: 2, tower: 3, center: 1, wall: 14 },
     villageRadius: 26,        // what counts as "this village" for caps
-    // Per-type spec. cost = energy to raise, hp = how much siege it takes.
+    // Per-type spec: cost = energy, wood/stone = materials consumed, hp =
+    // how much siege it endures. Nothing is free anymore.
     types: {
-      house:      { cost: 20, minEnergy: 62, hp: 60,  solid: false },
-      wall:       { cost: 9,  minEnergy: 34, hp: 90,  solid: true  },
-      gate:       { cost: 12, minEnergy: 40, hp: 100, solid: false },
-      storehouse: { cost: 18, minEnergy: 58, hp: 80,  solid: false },
-      tower:      { cost: 22, minEnergy: 64, hp: 120, solid: true, era: 2 },
-      center:     { cost: 26, minEnergy: 70, hp: 160, solid: false },
-      ram:        { cost: 14, minEnergy: 46, hp: 70,  solid: false },
-      ballista:   { cost: 16, minEnergy: 50, hp: 55,  solid: false, era: 2 },
-      catapult:   { cost: 20, minEnergy: 56, hp: 60,  solid: false, era: 3 }
+      house:      { cost: 18, wood: 2, stone: 1, minEnergy: 58, hp: 60,  solid: false },
+      wall:       { cost: 8,  wood: 1, stone: 1, minEnergy: 32, hp: 90,  solid: true  },
+      gate:       { cost: 11, wood: 2, stone: 1, minEnergy: 38, hp: 100, solid: false },
+      fence:      { cost: 5,  wood: 1, stone: 0, minEnergy: 24, hp: 30,  solid: true  },
+      storehouse: { cost: 16, wood: 2, stone: 1, minEnergy: 54, hp: 80,  solid: false },
+      tower:      { cost: 20, wood: 2, stone: 2, minEnergy: 60, hp: 120, solid: true, era: 2 },
+      center:     { cost: 24, wood: 3, stone: 2, minEnergy: 66, hp: 160, solid: false },
+      ram:        { cost: 14, wood: 2, stone: 0, minEnergy: 46, hp: 70,  solid: false },
+      ballista:   { cost: 16, wood: 2, stone: 1, minEnergy: 50, hp: 55,  solid: false, era: 2 },
+      catapult:   { cost: 20, wood: 3, stone: 2, minEnergy: 56, hp: 60,  solid: false, era: 3 }
     }
   },
 

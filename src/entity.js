@@ -326,13 +326,16 @@ export class Entity {
         const dest = this.home ? this.home.pos : target;
         if (dest) {
           const d = Math.hypot(this.pos.x - dest.x, this.pos.z - dest.z);
-          if (this.home && d < 2.6) {
-            // Step inside to rest out of sight (you'll find them in there).
-            this._enterBuilding(this.home, tick, this.rng.int(220, 620));
+          if (this.home && d < 3.0 && this._dangerBefore === 0) {
+            // Walked right up to the door — step inside to rest out of
+            // sight (you'll find them milling about in the interior).
+            this._enterBuilding(this.home, tick, this.rng.int(260, 700));
             want = 'idle';
+          } else if (this.home && d < 3.0) {
+            want = 'idle';                       // home but danger nearby — loiter
           } else {
-            want = (this.home && d < CONFIG.home.restRadius * 0.6) ? 'idle'
-              : this._moveToward(dest, this._dangerBefore > 0 ? 'run' : 'walk', dt);
+            // Keep walking all the way to the door (don't stop short).
+            want = this._moveToward(dest, this._dangerBefore > 0 ? 'run' : 'walk', dt);
           }
         } else want = 'idle';
         break;
@@ -371,9 +374,10 @@ export class Entity {
         const spec = CONFIG.structures.types[bt] ?? CONFIG.structures.types.house;
         // A player-forced build ignores the AI's energy/cool-down gating
         // (you asked to build it — so you build it).
-        const can = choice.force
+        const haveMats = this.wood >= (spec.wood ?? 0) && this.stone >= (spec.stone ?? 0);
+        const can = haveMats && (choice.force
           ? this.energy >= spec.cost + 2
-          : (!choice.gated && this.energy >= spec.minEnergy && this._buildCooldown <= 0);
+          : (!choice.gated && this.energy >= spec.minEnergy && this._buildCooldown <= 0));
         if (can) {
           // Build on the tidy village plot if one was assigned (keeps towns
           // organised); otherwise where standing (founding / player mode).
@@ -385,9 +389,12 @@ export class Entity {
           this._buildTimer = (this._buildTimer ?? 0) + dt;
           want = 'build';
           if (this._buildTimer > 1.4) {
-            const where = spot ? { x: spot.x, z: spot.z } : this.pos;
+            const where = spot ? { x: spot.x, z: spot.z, facing: choice.facing ?? 0 }
+              : { x: this.pos.x, z: this.pos.z, facing: choice.facing ?? this.heading };
             const st = this.world.addStructure(where, this.tribeColor, bt, this);
             this.energy -= spec.cost;
+            this.wood -= spec.wood ?? 0;
+            this.stone -= spec.stone ?? 0;
             if (bt === 'house' && !this.home) this.home = st; // first house = home
             this._buildTimer = 0;
             // Long cool-down: build, then go live (forage, family) rather
@@ -407,7 +414,8 @@ export class Entity {
         const anchor = choice.anchor ?? (this.home ? villageAnchor(this, this.world) : null);
         const slot = anchor ? nextRingSlot(this.world, anchor, this.pos) : null;
         const spec = slot ? CONFIG.structures.types[slot.type] : CONFIG.structures.types.wall;
-        if (slot && this.energy >= spec.minEnergy && this._buildCooldown <= 0) {
+        if (slot && this.energy >= spec.minEnergy && this._buildCooldown <= 0 &&
+            this.wood >= (spec.wood ?? 0) && this.stone >= (spec.stone ?? 0)) {
           want = Math.hypot(this.pos.x - slot.x, this.pos.z - slot.z) > 2.5
             ? this._moveToward(slot, 'walk', dt)
             : 'build';
@@ -417,6 +425,8 @@ export class Entity {
               this.world.addStructure({ x: slot.x, z: slot.z, facing: slot.facing },
                 this.tribeColor, slot.type, this);
               this.energy -= spec.cost;
+              this.wood -= spec.wood ?? 0;
+              this.stone -= spec.stone ?? 0;
               this._buildTimer = 0;
               this._buildCooldown = slot.type === 'gate' ? 18 : 14;
               this.memory.remember('fortified', tick, this.pos, 0.6);
@@ -487,7 +497,8 @@ export class Entity {
         const deployDist = engine === 'ram' ? CONFIG.war.ram.reach + 4
           : CONFIG.war[engine].range * 0.75;
         if (st && this.world.structures.includes(st) &&
-            this.energy >= wspec.minEnergy && this._buildCooldown <= 0) {
+            this.energy >= wspec.minEnergy && this._buildCooldown <= 0 &&
+            this.wood >= (wspec.wood ?? 0) && this.stone >= (wspec.stone ?? 0)) {
           const dx = st.pos.x - this.pos.x, dz = st.pos.z - this.pos.z;
           const d = Math.hypot(dx, dz) || 1;
           if (d > deployDist) {
@@ -501,6 +512,8 @@ export class Entity {
               const rx = this.pos.x + (dx / d) * off, rz = this.pos.z + (dz / d) * off;
               this.world.addStructure({ x: rx, z: rz, facing }, this.tribeColor, engine, this);
               this.energy -= wspec.cost;
+              this.wood -= wspec.wood ?? 0;
+              this.stone -= wspec.stone ?? 0;
               this._buildTimer = 0;
               this._buildCooldown = 16;
               this.memory.remember('sieged', tick, st.pos, 0.6);

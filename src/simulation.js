@@ -59,33 +59,27 @@ export class Simulation {
     });
 
     this.ray = new THREE.Raycaster();
-    // Clicking selects/follows a villager — but never while you're playing
-    // one (combat is on the spacebar; the mouse only aims).
-    this.renderer.domElement.addEventListener('pointerdown', (e) => {
+    this._mouseNDC = { x: 0, y: 0 };
+    const el = this.renderer.domElement;
+    el.addEventListener('pointermove', (e) => {
+      this._mouseNDC.x = (e.clientX / innerWidth) * 2 - 1;
+      this._mouseNDC.y = -(e.clientY / innerHeight) * 2 + 1;
+      // In world play / tower the mouse turns the head; indoors it is a
+      // free cursor for clicking objects (no camera spin, no hidden mouse).
+      if (this.mode === 'play' && !this.interior) {
+        this._camYaw -= (e.movementX || 0) * 0.0035;
+        this._camPitch = Math.min(1.35, Math.max(0.12,
+          this._camPitch + (e.movementY || 0) * 0.0028));
+      }
+    });
+    el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       if (this.mode === 'play') {
-        // First click captures the mouse (cursor hidden, look becomes
-        // smooth, no stray clicks). Subsequent clicks are game actions.
-        if (!this._locked) { this._lock(); return; }
         if (this.interior) this._interiorClick(e);
         else if (this._placing) this._confirmPlacing();
         else this._attackQueued = true;
       } else this._pick(e);
     });
-    const el = this.renderer.domElement;
-    document.addEventListener('pointerlockchange', () => {
-      this._locked = document.pointerLockElement === el;
-    });
-  }
-
-  _lock() {
-    const el = this.renderer.domElement;
-    if (el.requestPointerLock) { try { el.requestPointerLock(); } catch { /* ignore */ } }
-  }
-
-  _unlock() {
-    if (document.pointerLockElement) document.exitPointerLock?.();
-    this._locked = false;
   }
 
   // Inside a building: a click works the prop under the crosshair
@@ -93,10 +87,10 @@ export class Simulation {
   _interiorClick() {
     const it = this.interior;
     this._cgRay ??= new THREE.Raycaster();
-    this._cgRay.setFromCamera({ x: 0, y: 0 }, this.camera); // crosshair ray
+    this._cgRay.setFromCamera(this._mouseNDC, this.camera); // click where the cursor is
     const hit = this._cgRay.intersectObjects(it.props, true)[0];
-    const msg = hit ? it.interact(hit.object) : null;
-    if (msg) this._flash(msg);
+    const msg = hit ? it.interact(hit.object) : 'Nothing there — click an object.';
+    this._flash(msg);
   }
 
   _flash(text) {
@@ -111,8 +105,10 @@ export class Simulation {
   // WASD/QE free-fly until you click a villager (then the camera follows);
   // pressing a movement key drops follow back to free flight.
   _bindInput() {
-    const MOVE = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
+    const MOVE = new Set(['w', 'a', 's', 'd', 'q', 'e']); // WASD/QE only
+    const ARROWS = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown']);
     this._buildSel = 'house';
+    this._buildRot = 0;
     this._craftSel = 'sword';
     const BUILD_KEYS = { 1: 'house', 2: 'wall', 3: 'storehouse', 4: 'tower', 5: 'center', 6: 'gate' };
     const CRAFT_KEYS = { 7: 'sword', 8: 'bow', 9: 'pickaxe', 0: 'ladder' };
@@ -131,7 +127,10 @@ export class Simulation {
         } else if (k === 'r' && fresh) {
           inside ? this._exitInterior() : this._enterInterior();
         } else if (inside) { /* look/move only */ }
-        else {
+        else if (this._placing && ARROWS.has(k)) {
+          // Arrow keys spin the structure you're positioning.
+          this._buildRot += (k === 'arrowright' || k === 'arrowdown') ? -0.26 : 0.26;
+        } else {
           if (BUILD_KEYS[k]) { this._buildSel = BUILD_KEYS[k]; if (this._placing) this._makeGhost(); }
           if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
           if (k === 'b' && fresh) this._togglePlacing();
@@ -144,17 +143,10 @@ export class Simulation {
     addEventListener('keyup', (ev) => this.keys.delete(ev.key.toLowerCase()));
     addEventListener('blur', () => this.keys.clear());
 
-    // Mouse-look while playing a villager (no drag needed — the camera
-    // follows the mouse), with sensible yaw/pitch limits.
+    // Camera-look state (driven by the pointermove handler in _initRenderer).
     this._camYaw = Math.PI;
     this._camPitch = 0.42;
     this._camDist = 9;
-    addEventListener('mousemove', (ev) => {
-      if (this.mode !== 'play') return;
-      this._camYaw -= (ev.movementX || 0) * 0.0035;
-      this._camPitch = Math.min(1.35, Math.max(0.12,
-        this._camPitch + (ev.movementY || 0) * 0.0028));
-    });
     addEventListener('wheel', (ev) => {
       if (this.mode !== 'play') return;
       this._camDist = Math.min(16, Math.max(4, this._camDist + Math.sign(ev.deltaY)));
@@ -171,7 +163,6 @@ export class Simulation {
     } else if (mode === 'play') {
       c.enabled = false; // hand the camera to our collision-aware rig
     }
-    this.renderer.domElement.style.cursor = mode === 'play' ? 'none' : 'default';
     this._syncModeUI();
   }
 
@@ -180,7 +171,6 @@ export class Simulation {
     this.player = this.selected;
     this.player.controller = (self, p) => this._playerChoice(self, p);
     this._setMode('play');
-    this._lock();   // capture the mouse for smooth, click-safe control
   }
 
   _exitPlay() {
@@ -192,7 +182,6 @@ export class Simulation {
     if (this.player) this.player.controller = null;
     this.player = null;
     this._attackQueued = false;
-    this._unlock();
     this._setMode(this.selected && this.selected.alive ? 'follow' : 'free');
   }
 
@@ -248,9 +237,10 @@ export class Simulation {
   _togglePlacing() {
     if (this._placing) return this._cancelPlacing();
     this._placing = true;
+    this._buildRot = 0;
     this._buildOrder = null;
     this._makeGhost();
-    this._flash(`Placing ${this._buildSel} — aim with the crosshair, click to set it (1-6 changes type, Esc cancels).`);
+    this._flash(`Placing ${this._buildSel} — point with the mouse, ←/→ rotate, click to set (1-6 type, Esc cancels).`);
   }
 
   _cancelPlacing() {
@@ -271,7 +261,7 @@ export class Simulation {
 
   _groundAhead() {
     this._cgRay ??= new THREE.Raycaster();
-    this._cgRay.setFromCamera({ x: 0, y: 0 }, this.camera);
+    this._cgRay.setFromCamera(this._mouseNDC, this.camera); // place under the cursor
     const hit = this._cgRay.intersectObject(this.world.terrain, false)[0];
     if (hit) return hit.point;
     // Fallback: project forward from the player onto the terrain height.
@@ -285,6 +275,7 @@ export class Simulation {
     if (!this._ghost || !this.player) return;
     const g = this._groundAhead();
     this._ghost.position.set(g.x, g.y + 1.5, g.z);
+    this._ghost.rotation.y = this._buildRot;
     const blocked = this.world.countStructures(g.x, g.z, 'wall', 2) +
       this.world.countStructures(g.x, g.z, 'house', 2.5) > 0;
     this._ghost.material.color.setHex(blocked ? 0xff5a5a : 0xffffff);
@@ -293,7 +284,7 @@ export class Simulation {
   _confirmPlacing() {
     if (!this.player) return;
     const g = this._groundAhead();
-    this._buildOrder = { type: this._buildSel, x: g.x, z: g.z };
+    this._buildOrder = { type: this._buildSel, x: g.x, z: g.z, rot: this._buildRot };
     this._placing = false;
     if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
     this._flash(`Walking over to build a ${this._buildSel}.`);
@@ -322,17 +313,17 @@ export class Simulation {
     const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
     const K = this.keys;
     const dir = new THREE.Vector3();
-    if (K.has('w') || K.has('arrowup')) dir.add(fwd);
-    if (K.has('s') || K.has('arrowdown')) dir.sub(fwd);
-    if (K.has('d') || K.has('arrowright')) dir.add(right);
-    if (K.has('a') || K.has('arrowleft')) dir.sub(right);
+    if (K.has('w')) dir.add(fwd);
+    if (K.has('s')) dir.sub(fwd);
+    if (K.has('d')) dir.add(right);
+    if (K.has('a')) dir.sub(right);
 
     // A confirmed build order: walk to the chosen spot and raise it there.
     if (this._buildOrder) {
       const o = this._buildOrder;
       const done = this.world.countStructures(o.x, o.z, o.type, 3.5) > 0;
       if (done) { this._buildOrder = null; this._flash(`${o.type} built.`); }
-      else return { action: 'BUILD', build: o.type, spot: { x: o.x, z: o.z }, force: true };
+      else return { action: 'BUILD', build: o.type, spot: { x: o.x, z: o.z }, facing: o.rot, force: true };
     }
     // While positioning a building, movement still works but no attacks.
     if (this._placing) {
@@ -546,10 +537,10 @@ export class Simulation {
     const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
     const K = this.keys;
     const mv = new THREE.Vector3();
-    if (K.has('w') || K.has('arrowup')) mv.add(fwd);
-    if (K.has('s') || K.has('arrowdown')) mv.sub(fwd);
-    if (K.has('d') || K.has('arrowright')) mv.add(right);
-    if (K.has('a') || K.has('arrowleft')) mv.sub(right);
+    if (K.has('w')) mv.add(fwd);
+    if (K.has('s')) mv.sub(fwd);
+    if (K.has('d')) mv.add(right);
+    if (K.has('a')) mv.sub(right);
     if (mv.lengthSq() > 0) {
       mv.normalize().multiplyScalar(7 * rdt);
       this._intPos.x = THREE.MathUtils.clamp(this._intPos.x + mv.x, -it.bound, it.bound);
@@ -582,10 +573,10 @@ export class Simulation {
       const r = new THREE.Vector3(-f.z, 0, f.x); // camera-right (A/D fixed)
       const spd = 60 * rdt;
       const mv = new THREE.Vector3();
-      if (K.has('w') || K.has('arrowup')) mv.add(f);
-      if (K.has('s') || K.has('arrowdown')) mv.sub(f);
-      if (K.has('d') || K.has('arrowright')) mv.add(r);
-      if (K.has('a') || K.has('arrowleft')) mv.sub(r);
+      if (K.has('w')) mv.add(f);
+      if (K.has('s')) mv.sub(f);
+      if (K.has('d')) mv.add(r);
+      if (K.has('a')) mv.sub(r);
       if (mv.lengthSq() > 0) {
         mv.normalize().multiplyScalar(spd);
         this.controls.target.add(mv);
@@ -668,6 +659,7 @@ export class Simulation {
 
   _bindUI() {
     this.ui = {
+      hud: document.getElementById('hud'),
       tick: document.getElementById('hud-tick'),
       gen: document.getElementById('hud-gen'),
       pop: document.getElementById('hud-pop'),
@@ -712,10 +704,19 @@ export class Simulation {
     const sp = document.getElementById('btn-speed');
     sp.onclick = () => {
       this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 4 : 1;
-      sp.textContent = `Speed: ${this.speed}x`;
+      sp.textContent = `${this.speed}x`;
     };
     document.getElementById('btn-reset').onclick = () => this.reset();
     this.ui.playBtn.onclick = () => (this.mode === 'play' ? this._exitPlay() : this._enterPlay());
+
+    // Collapsible panels — the world starts clean, text only on demand.
+    const toggle = (btnId, panel) => {
+      const b = document.getElementById(btnId);
+      b.onclick = () => { panel.classList.toggle('hidden'); b.classList.toggle('on', !panel.classList.contains('hidden')); };
+    };
+    toggle('tb-stats', this.ui.hud);
+    toggle('tb-agent', this.ui.inspector);
+    toggle('tb-help', this.ui.playHelp);
     this._setMode('free');
   }
 
@@ -724,7 +725,6 @@ export class Simulation {
     const tag = { free: 'FREE CAM', follow: 'FOLLOWING', play: 'PLAYING' }[this.mode];
     this.ui.modeTag.textContent = tag;
     this.ui.modeTag.style.color = playing ? '#ff8aa0' : this.mode === 'follow' ? '#7fb2ff' : '#4fd28a';
-    this.ui.playHelp.style.display = playing ? 'block' : 'none';
     this.ui.playerHud.style.display = playing ? 'block' : 'none';
     this.ui.crosshair.style.display = playing ? 'block' : 'none';
     const canPlay = !!(this.selected && this.selected.alive);

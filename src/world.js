@@ -539,6 +539,8 @@ export class World {
       radius = 1.7;
     }
 
+    // Honour a requested orientation for any building (player can rotate).
+    if (pos.facing != null) mesh.rotation.y = pos.facing;
     this.scene.add(mesh);
     const spec = CONFIG.structures.types[type] ?? CONFIG.structures.types.house;
     const eraMul = 1 + (((builder?.tribeEra ?? 1) - 1) * CONFIG.era.wallHpPerEra);

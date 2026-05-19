@@ -89,7 +89,10 @@ export function decide(self, p, tick, rng) {
   const cand = [];
   const add = (action, score, data = {}) => {
     if (score <= 0) return;
-    const s = score * (W[action] ?? 1) * SK.bonusFor(action) * (1 + rng.range(-noise, noise));
+    let s = score * (W[action] ?? 1) * SK.bonusFor(action) * (1 + rng.range(-noise, noise));
+    // Commitment: keep doing what you're doing unless something is clearly
+    // better — this kills the every-tick twitch between near-equal options.
+    if (action === self.action) s *= 1.22;
     cand.push({ action, score: s, ...data });
   };
 
@@ -120,7 +123,9 @@ export function decide(self, p, tick, rng) {
 
   // --- Safety ---
   if (danger > 0.25) {
-    add('FLEE', danger * (1.6 + t.caution * 2.2) - allyCount * 0.25, {
+    // An armed fighter is far less inclined to run (so they hold and kill
+    // wolves/raiders rather than fleeing in circles).
+    add('FLEE', danger * (1.6 + t.caution * 2.2) - allyCount * 0.25 - (self.weapon ? 1.1 : 0), {
       target: nearestThreat ? nearestThreat.pos : self.memory.lastThreat(tick)
     });
     add('GROUP', danger * (1.1 + t.sociability + t.loyalty), {
@@ -134,10 +139,14 @@ export function decide(self, p, tick, rng) {
     add('DEFEND', (t.loyalty * 1.4 + t.aggression + Math.min(1, kinNear * 0.4)) * (1 + danger),
       { victim: homeRaider, target: homeRaider.pos });
   }
-  // Brave, armed agents turn and fight a wolf rather than only fleeing.
-  if (wolf && wolf._d < CONFIG.entity.perceptionRadius * 0.4) {
+  // Wolf-slaying: an armed villager (or a pack of kin) hunts the wolf
+  // down instead of fleeing forever — a kill drops a carcass too. Scaled
+  // high enough to actually beat the FLEE urge.
+  if (wolf && wolf._d < CONFIG.entity.perceptionRadius * 0.55) {
+    const armed = self.weapon ? 2.4 : 0;
+    const pack = Math.min(2, kinNear * 0.6);
     add('DEFEND',
-      (t.aggression + t.riskTolerance * 0.6 + (self.weapon ? 1.4 : 0) + kinNear * 0.3 - t.caution * 0.6),
+      1.0 + t.aggression * 1.3 + t.riskTolerance * 0.5 + armed + pack - t.caution * 0.4,
       { victim: wolf, target: wolf.pos });
   }
   // Fortify: extend the shared connected wall ring (entity picks the next
@@ -362,10 +371,12 @@ export function decide(self, p, tick, rng) {
   const huntDrive = self.memory.valenceOf('hunted') + 0.2;
   const minWood = CONFIG.tools.ladder.wood;
 
-  // Gather wood — mostly to make a tool, valued more if game is around.
-  if (tree && wantWeapon && self.wood < CONFIG.tools.bow.wood) {
+  // Gather wood — for tools AND for building (everything costs wood now),
+  // so settlers keep a small stockpile on hand.
+  if (tree && (self.wood < 4 || (wantWeapon && self.wood < CONFIG.tools.bow.wood))) {
     add('GATHER_WOOD',
-      (0.5 + t.aggression * 0.7 + t.curiosity * 0.4 + huntDrive) * (prey ? 1.5 : 1) - danger,
+      (0.55 + t.aggression * 0.5 + t.curiosity * 0.4 + huntDrive + (self.wood < 3 ? 0.5 : 0)) *
+      (prey ? 1.3 : 1) - danger,
       { target: tree.tree.pos, tree: tree.tree });
   }
   // Craft a tool once enough wood is on hand and it is safe to stop.
@@ -391,7 +402,8 @@ export function decide(self, p, tick, rng) {
   const ore = p.ores[0];
   if (ore && danger < 0.3) {
     const pick = self._toolSpec()?.mine ? 1.8 : 0.5;
-    add('MINE', (0.45 + t.curiosity * 0.7 + (self._toolSpec()?.mine ? 0.6 : 0) +
+    const needStone = self.stone < 3 ? 0.6 : 0;   // stone is now a build material
+    add('MINE', (0.45 + t.curiosity * 0.7 + needStone + (self._toolSpec()?.mine ? 0.6 : 0) +
       self.memory.valenceOf('mined')) * pick - ore.dist * 0.012,
       { target: ore.ore.pos, ore: ore.ore });
   }
@@ -414,7 +426,11 @@ export function decide(self, p, tick, rng) {
 
   if (!cand.length) return { action: 'IDLE' };
   cand.sort((a, b) => b.score - a.score);
-  return cand[0];
+  // If several options are about as good, pick one at random and run with
+  // it (the commitment bonus then keeps it chosen) — no dithering.
+  const top = cand[0].score;
+  const tied = cand.filter((c) => c.score >= top * 0.93);
+  return tied.length > 1 ? tied[Math.floor(rng() * tied.length)] : cand[0];
 }
 
 function norm(x, z) {
