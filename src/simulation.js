@@ -7,6 +7,7 @@ import { Entity } from './entity.js';
 import { Evolution } from './evolution.js';
 import { inheritTraits } from './personality.js';
 import { recomputeTribes } from './tribes.js';
+import { Interior } from './interior.js';
 
 // Owns the renderer, the fixed-tick simulation loop, and the UI. Physics,
 // movement, perception, animation-state and decisions all advance on the
@@ -59,9 +60,37 @@ export class Simulation {
     // one (combat is on the spacebar; the mouse only aims).
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
-      if (this.mode === 'play') this._attackQueued = true; // click = attack
+      if (this.interior) this._interiorClick(e);
+      else if (this.mode === 'play') this._attackQueued = true; // click = attack
       else this._pick(e);
     });
+  }
+
+  // Inside a building: a click either works a prop (shelves, kin, banner)
+  // or, on the tower, looses an arrow out over the wall.
+  _interiorClick() {
+    const it = this.interior;
+    let msg;
+    if (it.type === 'tower') {
+      const fwd = new THREE.Vector3();
+      this.camera.getWorldDirection(fwd);
+      msg = it.shootOut({ x: fwd.x, z: fwd.z });
+    } else {
+      this._cgRay ??= new THREE.Raycaster();
+      this._cgRay.setFromCamera({ x: 0, y: 0 }, this.camera); // crosshair ray
+      const hit = this._cgRay.intersectObjects(it.props, true)[0];
+      if (hit) msg = it.interact(hit.object);
+    }
+    if (msg) this._flash(msg);
+  }
+
+  _flash(text) {
+    const el = this.ui?.interiorMsg;
+    if (!el) return;
+    el.textContent = text;
+    el.style.opacity = '1';
+    clearTimeout(this._flashT);
+    this._flashT = setTimeout(() => { el.style.opacity = '0'; }, 2200);
   }
 
   // WASD/QE free-fly until you click a villager (then the camera follows);
@@ -79,12 +108,15 @@ export class Simulation {
       this.keys.add(k);
       if (this.mode === 'follow' && MOVE.has(k)) this._setMode('free');
       if (this.mode === 'play') {
-        if (BUILD_KEYS[k]) this._buildSel = BUILD_KEYS[k];
-        if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
-        if (k === 'escape') this._exitPlay();
-        // Space = attack (same as a mouse click); it auto-resolves to a
-        // ranged shot or a melee strike depending on weapon & target.
-        if (isSpace(k) && fresh) this._attackQueued = true;
+        if (k === 'escape') { this.interior ? this._exitInterior() : this._exitPlay(); }
+        else if (k === 'r' && fresh) { this.interior ? this._exitInterior() : this._enterInterior(); }
+        else if (this.interior) { /* movement only inside */ }
+        else {
+          if (BUILD_KEYS[k]) this._buildSel = BUILD_KEYS[k];
+          if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
+          // Space = attack (same as a mouse click); auto ranged or melee.
+          if (isSpace(k) && fresh) this._attackQueued = true;
+        }
         ev.preventDefault();
       }
     });
@@ -129,15 +161,43 @@ export class Simulation {
   }
 
   _exitPlay() {
+    if (this.interior) this._exitInterior();
     if (this.player) this.player.controller = null;
     this.player = null;
     this._attackQueued = false;
     this._setMode(this.selected && this.selected.alive ? 'follow' : 'free');
   }
 
+  // Step inside the nearest friendly building you're standing at.
+  _enterInterior() {
+    const pl = this.player;
+    if (!pl) return;
+    let near = null, nd = 6;
+    for (const st of this.world.structures) {
+      if (st.type === 'wall') continue;
+      const d = Math.hypot(st.pos.x - pl.pos.x, st.pos.z - pl.pos.z);
+      if (d < nd && (st.tribe == null || st.tribe === pl.tribeId || st.owner === pl.id ||
+          pl.kin.has(st.owner))) { nd = d; near = st; }
+    }
+    if (!near) { this._flash('No building of yours within reach to enter.'); return; }
+    this.interior = new Interior(near, pl, this.world);
+    this._intPos = new THREE.Vector3(0, 0, this.interior.bound * 0.6);
+    this._syncModeUI();
+    this._flash(`Entered ${near.type}. Mouse looks · click to use · R / Esc to leave.`);
+  }
+
+  _exitInterior() {
+    if (!this.interior) return;
+    this.interior.dispose();
+    this.interior = null;
+    this._syncModeUI();
+  }
+
   // Translate live keyboard state into the same choice objects the utility
   // AI produces, so the agent executes player intent through identical code.
   _playerChoice(self, p) {
+    // While inside a building the body waits at the door.
+    if (this.interior) return { action: 'IDLE' };
     const fwd = new THREE.Vector3();
     this.camera.getWorldDirection(fwd);
     fwd.y = 0; fwd.normalize();
@@ -226,6 +286,8 @@ export class Simulation {
     this.evolution = new Evolution(this.world, this.rng);
     this.tribes = [];
     this.entities = [];
+    this.world.entities = this.entities; // interiors look up kin by id
+    this.interior = null;
     for (let i = 0; i < CONFIG.population.initial; i++) {
       this.entities.push(new Entity(this.world, this.rng, { generation: 1 }));
     }
@@ -267,6 +329,7 @@ export class Simulation {
   }
 
   reset() {
+    if (this.interior) { this.interior.dispose(); this.interior = null; }
     for (const e of this.entities) e.alive && e.die();
     while (this.mount.firstChild) this.mount.removeChild(this.mount.firstChild);
     this.renderer.dispose();
@@ -309,10 +372,49 @@ export class Simulation {
     }
 
     for (const e of this.entities) e.render(rdt * (this.running ? this.speed : 1));
+
+    if (this.interior) {
+      if (!this.player || !this.player.alive) { this._exitInterior(); this._exitPlay(); }
+      else {
+        this.interior.update(rdt);
+        this._interiorCamera(rdt);
+        this.renderer.render(this.interior.scene, this.camera);
+        this._updateHUD();
+        return;
+      }
+    }
     this._updateCamera(rdt);
     this.renderer.render(this.scene, this.camera);
     this._updateHUD();
   };
+
+  // First-person inside a room: mouse looks (reusing the play yaw/pitch),
+  // WASD walks within the room bounds.
+  _interiorCamera(rdt) {
+    const it = this.interior;
+    const yaw = this._camYaw;
+    const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    const K = this.keys;
+    const mv = new THREE.Vector3();
+    if (K.has('w') || K.has('arrowup')) mv.add(fwd);
+    if (K.has('s') || K.has('arrowdown')) mv.sub(fwd);
+    if (K.has('d') || K.has('arrowright')) mv.add(right);
+    if (K.has('a') || K.has('arrowleft')) mv.sub(right);
+    if (mv.lengthSq() > 0) {
+      mv.normalize().multiplyScalar(7 * rdt);
+      this._intPos.x = THREE.MathUtils.clamp(this._intPos.x + mv.x, -it.bound, it.bound);
+      this._intPos.z = THREE.MathUtils.clamp(this._intPos.z + mv.z, -it.bound, it.bound);
+    }
+    this.camera.position.set(this._intPos.x, it.eye, this._intPos.z);
+    const pitch = this._camPitch - 0.5; // look level-ish, not down at feet
+    const cp = Math.cos(pitch);
+    this.camera.lookAt(
+      this._intPos.x + Math.sin(yaw) * cp,
+      it.eye - Math.sin(pitch),
+      this._intPos.z + Math.cos(yaw) * cp
+    );
+  }
 
   _updateCamera(rdt) {
     if (this.mode === 'play') {
@@ -441,6 +543,7 @@ export class Simulation {
       playHelp: document.getElementById('play-help'),
       playerHud: document.getElementById('player-hud'),
       crosshair: document.getElementById('crosshair'),
+      interiorMsg: document.getElementById('interior-msg'),
       ph: {
         energy: document.getElementById('ph-energy'),
         wood: document.getElementById('ph-wood'),

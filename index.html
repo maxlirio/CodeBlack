@@ -70,6 +70,13 @@
       #player-hud .ph-row span { color: #8b97b0; }
       #player-hud .ph-row b { color: #ffd27f; }
 
+      #interior-msg {
+        position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%);
+        background: rgba(8, 12, 22, 0.88); border: 1px solid rgba(255,210,127,0.4);
+        color: #ffe7c4; font-size: 13px; padding: 9px 16px; border-radius: 8px;
+        opacity: 0; transition: opacity 0.3s; pointer-events: none; backdrop-filter: blur(6px);
+      }
+
       #crosshair {
         position: fixed; top: 50%; left: 50%; width: 18px; height: 18px;
         transform: translate(-50%, -50%); pointer-events: none;
@@ -114,6 +121,7 @@
     <button id="play-btn" style="display:none">▶ PLAY AS THIS VILLAGER</button>
 
     <div id="crosshair" style="display:none"></div>
+    <div id="interior-msg"></div>
 
     <div id="player-hud" style="display:none">
       <div class="ph-row"><span>Energy</span><b id="ph-energy">0</b></div>
@@ -132,6 +140,7 @@
       <b>You are this villager.</b> Mouse aims · move with WASD · Shift run<br />
       <b>Click or Space = attack</b> (auto: shoots with a bow/spear, else melee) · mouse aims<br />
       B build (1-6 pick) · G wall/gate · F plant · C craft (7-0 pick) · E gather/eat<br />
+      <b>R</b> = enter / leave a building (storehouse · tower · house · center)<br />
       <span style="color:#7fb2ff">Esc</span> or Release to hand back to the AI
     </div>
 
