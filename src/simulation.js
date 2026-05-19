@@ -270,7 +270,7 @@ export class Simulation {
     if (this._placing) return this._cancelPlacing();
     this._placing = true;
     this._buildRot = 0;
-    this._buildOrder = null;
+    if (this._buildOrder) { this._buildOrder = null; this._flash('Build order cancelled.'); }
     this._makeGhost();
     this._flash(`Placing ${this._buildSel} — point with the mouse, ←/→ rotate, click to set (1-6 type, Esc cancels).`);
   }
@@ -316,10 +316,23 @@ export class Simulation {
   _confirmPlacing() {
     if (!this.player) return;
     const g = this._groundAhead();
-    this._buildOrder = { type: this._buildSel, x: g.x, z: g.z, rot: this._buildRot };
+    const spec = CONFIG.structures.types[this._buildSel] ?? CONFIG.structures.types.house;
+    const p = this.player;
+    if (p.wood < (spec.wood ?? 0) || p.stone < (spec.stone ?? 0)) {
+      // Don't strand the player on an unbuildable order — say what's short.
+      const need = [];
+      if (p.wood < (spec.wood ?? 0)) need.push(`${spec.wood - p.wood} wood`);
+      if (p.stone < (spec.stone ?? 0)) need.push(`${spec.stone - p.stone} stone`);
+      this._flash(`Can't build ${this._buildSel}: need ${need.join(' & ')} (E on a tree / ore).`);
+      this._placing = false;
+      if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
+      return;
+    }
+    this._buildOrder = { type: this._buildSel, x: g.x, z: g.z, rot: this._buildRot,
+      until: this.tickCount + 1600 };
     this._placing = false;
     if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
-    this._flash(`Walking over to build a ${this._buildSel}.`);
+    this._flash(`Walking over to build a ${this._buildSel}. (B cancels.)`);
   }
 
   // Translate live keyboard state into the same choice objects the utility
@@ -355,7 +368,11 @@ export class Simulation {
       const o = this._buildOrder;
       const done = this.world.countStructures(o.x, o.z, o.type, 3.5) > 0;
       if (done) { this._buildOrder = null; this._flash(`${o.type} built.`); }
-      else return { action: 'BUILD', build: o.type, spot: { x: o.x, z: o.z }, facing: o.rot, force: true };
+      else if (this.tickCount > o.until) {
+        // Couldn't get it done (unreachable spot / lost materials) — free the player.
+        this._buildOrder = null;
+        this._flash(`Gave up building ${o.type} — you can move again. (B to retry.)`);
+      } else return { action: 'BUILD', build: o.type, spot: { x: o.x, z: o.z }, facing: o.rot, force: true };
     }
     // While positioning a building, movement still works but no attacks.
     if (this._placing) {
