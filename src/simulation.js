@@ -180,14 +180,24 @@ export class Simulation {
   _enterInterior() {
     const pl = this.player;
     if (!pl) return;
+    // "Yours" via robust, churn-proof ownership: you built it, a kinsman
+    // built it, it flies your tribe's tag, OR its builder is a living
+    // member of your tribe right now (tribe ids drift after captures, so
+    // we trust the owner's *current* allegiance, not the frozen tag).
+    const byId = new Map(this.entities.filter((e) => e.alive).map((e) => [e.id, e]));
+    const mine = (st) => {
+      if (st.owner === pl.id || pl.kin.has(st.owner) || st.tribe === pl.tribeId) return true;
+      const o = byId.get(st.owner);
+      return !!o && (o.tribeId === pl.tribeId || o.id === pl.id);
+    };
     let near = null, nd = 6;
     for (const st of this.world.structures) {
       if (st.type === 'wall' || st.type === 'gate' || st.type === 'ram') continue;
-      if (st.tribe !== pl.tribeId && st.owner !== pl.id) continue; // own tribe only
+      if (!mine(st)) continue;
       const d = Math.hypot(st.pos.x - pl.pos.x, st.pos.z - pl.pos.z);
       if (d < nd) { nd = d; near = st; }
     }
-    if (!near) { this._flash('Stand next to one of your own buildings, then press R.'); return; }
+    if (!near) { this._flash('Stand right next to one of your own tribe’s buildings, then press R.'); return; }
     if (near.type === 'tower') {
       this.towerPerch = near;     // climb up — stay in the world, just high
       this._syncModeUI();

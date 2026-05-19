@@ -440,12 +440,22 @@ export class World {
                  e.pos.distanceTo(center.pos) < CONFIG.tribe.homeMergeDist * 1.5) {
         if (this.rng.chance(CONFIG.war.convertChance)) {
           e.familyId = conqueror.familyId;            // defect to the victors
+          e.tribeId = conqueror.tribeId;              // ...effective at once
           e.home = null;
           const r = e.social.get(conqueror.id);
           r.trust = 0.6; r.hostility = 0;
           e.memory?.remember('defected', this.tickNow ?? 0, center.pos, 0.3);
           converted++;
         }
+      }
+    }
+    // The captured town changes hands — its buildings now fly the
+    // conqueror's colours (and become enterable by the new owners).
+    for (const st of this.structures) {
+      if (st.tribe === losingTribe &&
+          st.pos.distanceTo(center.pos) < CONFIG.tribe.homeMergeDist * 1.8) {
+        st.tribe = conqueror.tribeId;
+        st._fam = conqueror.familyId;
       }
     }
     // Calm the feud — the war is decided.
