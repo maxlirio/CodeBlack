@@ -159,18 +159,25 @@ export class World {
       }
     }
     this.roadGroup.clear();
+    this._roadMat ??= new THREE.MeshStandardMaterial({ color: 0x7a6038, roughness: 1 });
     this.roads = links.map(([a, b]) => {
       const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
       const len = Math.hypot(dx, dz) || 1;
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(L.roadWidth * 2, 0.08, len),
-        this._roadMat ??= new THREE.MeshStandardMaterial({ color: 0x6b5b44, roughness: 1 }));
-      mesh.position.set((a.pos.x + b.pos.x) / 2,
-        this.heightAt((a.pos.x + b.pos.x) / 2, (a.pos.z + b.pos.z) / 2) + 0.05,
-        (a.pos.z + b.pos.z) / 2);
-      mesh.rotation.y = Math.atan2(dx, dz);
-      mesh.receiveShadow = true;
-      this.roadGroup.add(mesh);
+      const yaw = Math.atan2(dx, dz);
+      // Lay the road as a chain of short tiles that each sit on the ground
+      // beneath them — a single long slab would sink under the hills.
+      const step = 3;
+      const n = Math.max(1, Math.round(len / step));
+      for (let s = 0; s <= n; s++) {
+        const t = s / n;
+        const x = a.pos.x + dx * t, z = a.pos.z + dz * t;
+        const tile = new THREE.Mesh(
+          new THREE.BoxGeometry(L.roadWidth * 2, 0.12, step + 0.6), this._roadMat);
+        tile.position.set(x, this.heightAt(x, z) + 0.14, z);
+        tile.rotation.y = yaw;
+        tile.receiveShadow = true;
+        this.roadGroup.add(tile);
+      }
       return { ax: a.pos.x, az: a.pos.z, bx: b.pos.x, bz: b.pos.z, len2: len * len };
     });
   }
@@ -797,7 +804,7 @@ export class World {
       if (a.predator) {
         let q = null, qd = Infinity;
         for (const o of this.animals) {
-          if (o === a || !o.alive || o.predator) continue;
+          if (o === a || !o.alive || o.predator || o.horse) continue; // horses outrun wolves
           const d = o.pos.distanceTo(a.pos);
           if (d < qd && d < P.senseRadius) { qd = d; q = o; }
         }
@@ -852,7 +859,7 @@ export class World {
         100, 'wolf'));
     }
     const wildHorses = this.animals.filter((a) => a.horse && !a.tamed).length;
-    if (wildHorses < CONFIG.logistics.horses && this.rng.chance(0.004)) {
+    if (wildHorses < CONFIG.logistics.horses && this.rng.chance(0.02)) {
       const r = this.size * 0.9;
       this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
         299, 'horse'));

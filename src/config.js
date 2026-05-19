@@ -186,7 +186,7 @@ export const CONFIG = {
     roadMaxLen: 130,          // longest link the network will pave
     roadWidth: 2.6,           // half-width that counts as "on the road"
     roadSpeedMul: 1.45,       // travel bonus on a road
-    horses: 6,                // wild horses roaming the map
+    horses: 10,               // wild horses roaming the map
     horseSpeed: 8.4,          // faster than anything else
     horseHealth: 26,
     horseFood: 30,

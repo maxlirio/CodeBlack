@@ -372,7 +372,7 @@ export class Simulation {
       const foe = p.entities.find((e) => e.entity.tribeId !== self.tribeId &&
         !self.kin.has(e.entity.id) && e.dist < 7 && facing(e.entity.pos));
       const wolf = p.animals.find((a) => a.animal.predator && a.dist < 8 && facing(a.animal.pos));
-      const prey = p.animals.find((a) => !a.animal.predator && a.dist < 8 && facing(a.animal.pos));
+      const prey = p.animals.find((a) => !a.animal.predator && !a.animal.horse && a.dist < 8 && facing(a.animal.pos));
       const es = p.structures.find(({ st, dist }) => st.tribe != null &&
         st.tribe !== self.tribeId && dist < 7 && facing(st.pos));
       if (foe) return { action: 'ATTACK', victim: foe.entity, target: foe.entity.pos };

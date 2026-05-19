@@ -339,8 +339,8 @@ export function decide(self, p, tick, rng) {
 
   // --- Nature & technology: wood -> weapons -> hunting, and farming ---
   const tree = p.trees[0];
-  const prey = p.animals.find((a) => !a.animal.predator)?.animal
-    ? p.animals.find((a) => !a.animal.predator) : null;
+  // Horses are skittish, not game — they're for taming, not the stewpot.
+  const prey = p.animals.find((a) => !a.animal.predator && !a.animal.horse) ?? null;
   const wantWeapon = !self.weapon || self.weaponDur <= 1;
   const huntDrive = self.memory.valenceOf('hunted') + 0.2;
   const minWood = CONFIG.tools.spear.wood;
