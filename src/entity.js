@@ -1045,6 +1045,8 @@ export class Entity {
 
   render(dt) {
     if (!this.alive || this.inside) return; // hidden indoors / posed on the tower
-    animateHumanoid(this.mesh, this.animState, dt, clamp(this.vel.length() / CONFIG.entity.runSpeed, 0, 1));
+    // On horseback the legs shouldn't be running — sit still in the saddle.
+    const st = this._mounted() ? 'idle' : this.animState;
+    animateHumanoid(this.mesh, st, dt, this._mounted() ? 0 : clamp(this.vel.length() / CONFIG.entity.runSpeed, 0, 1));
   }
 }
