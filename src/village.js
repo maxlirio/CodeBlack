@@ -51,7 +51,10 @@ export function wallRing(anchor) {
     slots.push({
       x: anchor.x + Math.sin(a) * R,
       z: anchor.z + Math.cos(a) * R,
-      facing: a + Math.PI / 2,                 // tangent so segments line up
+      // Wall length runs along its local +X; rotating by `a` makes that
+      // tangent to the ring (the old +90° pointed segments radially,
+      // turning the wall into spokes instead of a circle).
+      facing: a,
       type: i % gateEvery === (gateEvery >> 1) ? 'gate' : 'wall'
     });
   }

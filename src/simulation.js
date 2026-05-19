@@ -23,11 +23,7 @@ export class Simulation {
     this.mode = 'free';          // 'free' (WASD) | 'follow' | 'play'
     this.player = null;          // entity the human is controlling
     this.keys = new Set();
-    this._spaceActive = false;   // spacebar held (aiming)
-    this._spaceDownT = 0;
-    this._pendingMelee = false;
-    this._pendingShot = null;    // charge 0..1 when a held shot is released
-    this._aimStart = 0;
+    this._attackQueued = false;  // a click / Space press waiting to resolve
     this._initRenderer();
     this._initScene();
     this._bindUI();
@@ -62,7 +58,9 @@ export class Simulation {
     // Clicking selects/follows a villager — but never while you're playing
     // one (combat is on the spacebar; the mouse only aims).
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
-      if (e.button === 0 && this.mode !== 'play') this._pick(e);
+      if (e.button !== 0) return;
+      if (this.mode === 'play') this._attackQueued = true; // click = attack
+      else this._pick(e);
     });
   }
 
@@ -77,36 +75,21 @@ export class Simulation {
     const isSpace = (k) => k === ' ' || k === 'spacebar';
     addEventListener('keydown', (ev) => {
       const k = ev.key.toLowerCase();
+      const fresh = !this.keys.has(k);
       this.keys.add(k);
       if (this.mode === 'follow' && MOVE.has(k)) this._setMode('free');
       if (this.mode === 'play') {
         if (BUILD_KEYS[k]) this._buildSel = BUILD_KEYS[k];
         if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
         if (k === 'escape') this._exitPlay();
-        // Spacebar = combat. Hold it (with a bow/spear) to aim — the mouse
-        // drags the crosshair — and let go to throw / loose the shot.
-        if (isSpace(k) && !this._spaceActive) {
-          this._spaceActive = true;
-          this._spaceDownT = performance.now();
-        }
+        // Space = attack (same as a mouse click); it auto-resolves to a
+        // ranged shot or a melee strike depending on weapon & target.
+        if (isSpace(k) && fresh) this._attackQueued = true;
         ev.preventDefault();
       }
     });
-    addEventListener('keyup', (ev) => {
-      const k = ev.key.toLowerCase();
-      this.keys.delete(k);
-      if (this.mode === 'play' && isSpace(k) && this._spaceActive) {
-        this._spaceActive = false;
-        const held = performance.now() - (this._spaceDownT || 0);
-        const ranged = (this.player?._rangedReach?.() ?? 0) > 0;
-        if (ranged && held >= 160) {
-          this._pendingShot = Math.min(1, Math.max(0.2, held / 900)); // charged
-        } else {
-          this._pendingMelee = true; // tap = melee swing (a spear jab too)
-        }
-      }
-    });
-    addEventListener('blur', () => { this.keys.clear(); this._spaceActive = false; });
+    addEventListener('keyup', (ev) => this.keys.delete(ev.key.toLowerCase()));
+    addEventListener('blur', () => this.keys.clear());
 
     // Mouse-look while playing a villager (no drag needed — the camera
     // follows the mouse), with sensible yaw/pitch limits.
@@ -148,9 +131,7 @@ export class Simulation {
   _exitPlay() {
     if (this.player) this.player.controller = null;
     this.player = null;
-    this._spaceActive = false;
-    this._pendingMelee = false;
-    this._pendingShot = null;
+    this._attackQueued = false;
     this._setMode(this.selected && this.selected.alive ? 'follow' : 'free');
   }
 
@@ -160,7 +141,9 @@ export class Simulation {
     const fwd = new THREE.Vector3();
     this.camera.getWorldDirection(fwd);
     fwd.y = 0; fwd.normalize();
-    const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
+    // Camera-right = forward x up  →  (-fz, 0, fx). The old (fz,0,-fx)
+    // was the negation, which swapped A/D (left ↔ right).
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
     const K = this.keys;
     const dir = new THREE.Vector3();
     if (K.has('w') || K.has('arrowup')) dir.add(fwd);
@@ -168,46 +151,41 @@ export class Simulation {
     if (K.has('d') || K.has('arrowright')) dir.add(right);
     if (K.has('a') || K.has('arrowleft')) dir.sub(right);
 
-    // --- Spacebar combat ---
-    // Tap space = melee swing (a spear jab too). Hold space with a bow or
-    // spear to aim — the mouse drags the crosshair — release to fire/throw.
-    const reach = self._rangedReach?.() ?? 0;
-    const shotCharge = this._pendingShot;
-    if (shotCharge != null && reach > 0 && self._shootCd <= 0) {
-      this._pendingShot = null;
-      let aim = { x: fwd.x, z: fwd.z };
-      let best = null, bestDot = Math.cos(CONFIG.projectile.autoAimCone);
-      const cands = [
-        ...p.animals.map((a) => a.animal),
-        ...p.entities.filter((e) => e.entity.tribeId !== self.tribeId).map((e) => e.entity)
-      ];
-      for (const c of cands) {
-        const dx = c.pos.x - self.pos.x, dz = c.pos.z - self.pos.z;
-        const L = Math.hypot(dx, dz) || 1;
-        if (L > reach) continue;
-        const dot = (dx / L) * fwd.x + (dz / L) * fwd.z;
-        if (dot > bestDot) { bestDot = dot; best = { x: dx, z: dz }; }
-      }
-      return { action: 'SHOOT', aim: best ?? aim, power: shotCharge };
-    }
-
-    // A held "shot" with no ranged weapon just becomes a melee swing.
-    if (this._pendingShot != null && reach === 0) { this._pendingShot = null; this._pendingMelee = true; }
-
-    if (this._pendingMelee) {
-      this._pendingMelee = false;
-      // Strike whatever the crosshair faces: enemy, beast, or structure.
-      const facing = (pos) => {
+    // --- Combat: one button (click or Space) that just works ---
+    // It auto-resolves: if you carry a bow/spear and a target is within
+    // ranged reach roughly in the crosshair, you shoot it; otherwise you
+    // melee-strike the nearest thing you're facing; otherwise a swing.
+    if (this._attackQueued) {
+      this._attackQueued = false;
+      const facing = (pos, loose = 0.0) => {
         const dx = pos.x - self.pos.x, dz = pos.z - self.pos.z;
         const L = Math.hypot(dx, dz) || 1;
-        return (dx / L) * fwd.x + (dz / L) * fwd.z > 0.2;
+        return (dx / L) * fwd.x + (dz / L) * fwd.z > loose;
       };
+      const reach = self._rangedReach?.() ?? 0;
+      if (reach > 0 && self._shootCd <= 0) {
+        let best = null, bestDot = Math.cos(CONFIG.projectile.autoAimCone);
+        const cands = [
+          ...p.animals.map((a) => a.animal),
+          ...p.entities.filter((e) => e.entity.tribeId !== self.tribeId &&
+            !self.kin.has(e.entity.id)).map((e) => e.entity)
+        ];
+        for (const c of cands) {
+          const dx = c.pos.x - self.pos.x, dz = c.pos.z - self.pos.z;
+          const L = Math.hypot(dx, dz) || 1;
+          if (L > reach) continue;
+          const dot = (dx / L) * fwd.x + (dz / L) * fwd.z;
+          if (dot > bestDot) { bestDot = dot; best = { x: dx, z: dz }; }
+        }
+        // Fire at the locked target, or just straight ahead.
+        return { action: 'SHOOT', aim: best ?? { x: fwd.x, z: fwd.z }, power: 1 };
+      }
       const foe = p.entities.find((e) => e.entity.tribeId !== self.tribeId &&
-        !self.kin.has(e.entity.id) && e.dist < 8 && facing(e.entity.pos));
-      const wolf = p.animals.find((a) => a.animal.predator && a.dist < 9 && facing(a.animal.pos));
-      const prey = p.animals.find((a) => !a.animal.predator && a.dist < 9 && facing(a.animal.pos));
+        !self.kin.has(e.entity.id) && e.dist < 7 && facing(e.entity.pos));
+      const wolf = p.animals.find((a) => a.animal.predator && a.dist < 8 && facing(a.animal.pos));
+      const prey = p.animals.find((a) => !a.animal.predator && a.dist < 8 && facing(a.animal.pos));
       const es = p.structures.find(({ st, dist }) => st.tribe != null &&
-        st.tribe !== self.tribeId && dist < 8 && facing(st.pos));
+        st.tribe !== self.tribeId && dist < 7 && facing(st.pos));
       if (foe) return { action: 'ATTACK', victim: foe.entity, target: foe.entity.pos };
       if (wolf) return { action: 'DEFEND', victim: wolf.animal, target: wolf.animal.pos };
       if (prey) return { action: 'HUNT', animal: prey.animal, target: prey.animal.pos };
@@ -412,18 +390,10 @@ export class Simulation {
     ph.role.textContent = s.role();
     ph.kin.textContent = s.kin.size;
 
-    // Crosshair feedback: grows & reddens while spacebar is held to aim.
-    const ranged = (s._rangedReach?.() ?? 0) > 0;
+    // Crosshair turns amber when a ranged weapon can fire (ready to shoot).
     const ch = this.ui.crosshair;
-    if (this._spaceActive && ranged) {
-      const c = Math.min(1, (performance.now() - this._spaceDownT) / 900);
-      const sz = 18 + c * 22;
-      ch.style.width = ch.style.height = `${sz}px`;
-      ch.style.borderColor = `rgba(255,${Math.round(200 - c * 160)},${Math.round(160 - c * 140)},0.85)`;
-    } else {
-      ch.style.width = ch.style.height = '18px';
-      ch.style.borderColor = 'rgba(255,255,255,0.6)';
-    }
+    const ready = (s._rangedReach?.() ?? 0) > 0 && (s._shootCd ?? 0) <= 0;
+    ch.style.borderColor = ready ? 'rgba(255,210,127,0.9)' : 'rgba(255,255,255,0.6)';
   }
 
   _pick(ev) {

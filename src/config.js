@@ -8,15 +8,15 @@ export const CONFIG = {
   },
 
   nature: {
-    bushCount: 84,            // wild berry bushes — base forage
+    bushCount: 140,           // wild berry bushes — scaled for a bigger pop
     bushEnergy: 34,
-    bushRegrowTicks: 620,
-    forests: 7,               // tree clusters
+    bushRegrowTicks: 560,
+    forests: 10,              // tree clusters
     treesPerForest: 9,
     treeWood: 4,              // wood units per tree before it is depleted
     treeRegrowTicks: 2600,
     woodPerChop: 1,
-    herds: 5,
+    herds: 8,
     animalsPerHerd: 5,
     animalEnergy: 78,         // food yielded by a kill (a feast — worth hunting)
     animalHealth: 34,
@@ -37,9 +37,9 @@ export const CONFIG = {
   },
 
   population: {
-    initial: 28,
-    min: 14,               // evolution refills toward this floor
-    max: 46
+    initial: 44,
+    min: 24,               // evolution refills toward this floor
+    max: 80
   },
 
   sim: {
