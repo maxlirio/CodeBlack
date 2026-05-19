@@ -134,8 +134,19 @@ export const CONFIG = {
       gate:       { cost: 12, minEnergy: 40, hp: 100, solid: false },
       storehouse: { cost: 18, minEnergy: 58, hp: 80,  solid: false },
       tower:      { cost: 22, minEnergy: 64, hp: 120, solid: true, era: 2 },
-      center:     { cost: 26, minEnergy: 70, hp: 160, solid: false }
+      center:     { cost: 26, minEnergy: 70, hp: 160, solid: false },
+      ram:        { cost: 14, minEnergy: 48, hp: 70,  solid: false }
     }
+  },
+
+  war: {
+    feudToSiege: 1.0,         // clan hatred at which siege engines appear
+    ramDamagePerTick: 1.6,    // a ram batters the nearest enemy structure
+    ramReach: 6,              // how close the ram works
+    siegeMinEnergy: 48,
+    captureEraReward: 4,      // era-progress the conqueror tribe gains
+    captureEnergyReward: 28,  // morale/spoils for nearby victors
+    convertChance: 0.6        // odds a leaderless survivor joins the conqueror
   },
 
   stockpile: {
@@ -159,10 +170,11 @@ export const CONFIG = {
   },
 
   feud: {
-    perKill: 1.0,             // hatred a clan gains when one of theirs is slain
-    decayPerTick: 0.00035,    // grudges cool slowly over time
+    perKill: 1.7,             // hatred a clan gains when one of theirs is slain
+    decayPerTick: 0.00022,    // grudges cool slowly over time
     hostility: 0.5,           // how strongly feud translates into aggression
-    avengeRadius: 30          // a fresh killing enrages nearby kin/tribe
+    avengeRadius: 30,         // a fresh killing enrages nearby kin/tribe
+    warThreshold: 1.0         // at/above this a clan marches on the enemy
   },
 
   predator: {
@@ -228,6 +240,8 @@ export const ACTIONS = [
   'FARM',
   'STOCKPILE',
   'RAID',
+  'SIEGE',
+  'TRADE',
   'ATTACK'
 ];
 

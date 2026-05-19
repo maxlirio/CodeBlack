@@ -280,6 +280,26 @@ export class World {
       flag.position.set(0.5, 6.6, 0); flag.rotation.z = -Math.PI / 2;
       mesh.add(base, hut, roof, pole, flag);
       radius = 2.6;
+    } else if (type === 'ram') {
+      // A timber battering ram on a low frame — a mobile siege engine.
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 3.6, 6),
+        new THREE.MeshStandardMaterial({ color: 0x5a3d24, roughness: 0.9 }));
+      beam.rotation.z = Math.PI / 2; beam.position.y = 1.3; beam.castShadow = true;
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.7, 5),
+        new THREE.MeshStandardMaterial({ color: 0x8d8576, roughness: 0.6 }));
+      cap.rotation.z = -Math.PI / 2; cap.position.set(1.9, 1.3, 0);
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.25, 1.6),
+        new THREE.MeshStandardMaterial({ color: tribeColor, roughness: 0.8 }));
+      roof.position.y = 2.1;
+      for (const sx of [-1.3, 1.3]) for (const sz of [-0.6, 0.6]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.2, 6),
+          new THREE.MeshStandardMaterial({ color: 0x3a2f22 }));
+        wheel.rotation.x = Math.PI / 2; wheel.position.set(sx, 0.5, sz);
+        mesh.add(wheel);
+      }
+      mesh.add(beam, cap, roof);
+      mesh.rotation.y = pos.facing ?? 0;
+      radius = 1.8;
     } else {
       const hgt = 2 + this.rng.range(0, 1.2);
       const body = new THREE.Mesh(
@@ -310,19 +330,55 @@ export class World {
       hp: maxHp, maxHp,
       owner: builder ? builder.id : null,
       tribe: builder ? builder.tribeId : null,
+      _fam: builder ? builder.familyId : null,
       store: type === 'storehouse' ? { food: 0, wood: 0 } : null
     };
     this.structures.push(s);
     return s;
   }
 
-  damageStructure(st, dmg) {
+  damageStructure(st, dmg, by = null) {
     st.hp -= dmg;
     st._lastHit = this.tickNow ?? 0;
+    if (by) st._lastBy = by;
     // Visibly list as it crumbles.
     st.mesh.rotation.z = (1 - st.hp / st.maxHp) * 0.18;
-    if (st.hp <= 0) { this.removeStructure(st); return true; }
+    if (st.hp <= 0) {
+      const razed = st;
+      this.removeStructure(st);
+      if (razed.type === 'center') this.captureCity(razed, by ?? razed._lastBy);
+      return true;
+    }
     return false;
+  }
+
+  // Razing a town centre breaks the defending clan: nearby leaderless
+  // survivors may defect to the conquerors, who reap spoils and progress.
+  captureCity(center, conqueror) {
+    if (!conqueror || !conqueror.alive) return;
+    const losingTribe = center.tribe;
+    const ents = this.entities || [];
+    let converted = 0;
+    for (const e of ents) {
+      if (!e.alive) continue;
+      if (e.tribeId === conqueror.tribeId) {
+        e.energy = Math.min(CONFIG.entity.maxEnergy, e.energy + CONFIG.war.captureEnergyReward);
+        e.memory?.remember('conquered', this.tickNow ?? 0, center.pos, 1);
+      } else if (e.tribeId === losingTribe &&
+                 e.pos.distanceTo(center.pos) < CONFIG.tribe.homeMergeDist * 1.5) {
+        if (this.rng.chance(CONFIG.war.convertChance)) {
+          e.familyId = conqueror.familyId;            // defect to the victors
+          e.home = null;
+          const r = e.social.get(conqueror.id);
+          r.trust = 0.6; r.hostility = 0;
+          e.memory?.remember('defected', this.tickNow ?? 0, center.pos, 0.3);
+          converted++;
+        }
+      }
+    }
+    // Calm the feud — the war is decided.
+    this.feuds.delete(this._feudKey(losingTribe, conqueror.tribeId));
+    this.lastCapture = { tick: this.tickNow ?? 0, by: conqueror.tribeId, converted };
   }
 
   removeStructure(st) {
@@ -471,6 +527,20 @@ export class World {
     return this.feuds.get(this._feudKey(a, b)) ?? 0;
   }
 
+  // The nearest structure of a clan this agent is at war with — the
+  // objective a war band marches on even when it's out of sight.
+  warTarget(self, minFeud) {
+    let best = null, bd = Infinity, centre = null, cd = Infinity;
+    for (const st of this.structures) {
+      if (st.tribe == null || st.tribe === self.tribeId || st.type === 'ram') continue;
+      if (this.feud(self.tribeId, st.tribe) < minFeud) continue;
+      const d = (st.pos.x - self.pos.x) ** 2 + (st.pos.z - self.pos.z) ** 2;
+      if (d < bd) { bd = d; best = st; }
+      if (st.type === 'center' && d < cd) { cd = d; centre = st; }
+    }
+    return best ? { st: best, centre, dist: Math.sqrt(bd) } : null;
+  }
+
   // A slain villager enrages their whole clan against the killer's clan,
   // and stokes any nearby kin who witness it — this is how feuds and
   // revenge wars between tribes ignite and escalate.
@@ -600,6 +670,20 @@ export class World {
       const r = this.size * 0.9;
       this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
         100, 'wolf'));
+    }
+
+    // Siege rams grind down the nearest enemy structure they're parked at.
+    const W = CONFIG.war;
+    for (const ram of this.structures) {
+      if (ram.type !== 'ram') continue;
+      let tgt = null, td = W.ramReach;
+      for (const st of this.structures) {
+        if (st === ram || st.type === 'ram') continue;
+        if (st.tribe == null || st.tribe === ram.tribe) continue;
+        const d = Math.hypot(st.pos.x - ram.pos.x, st.pos.z - ram.pos.z);
+        if (d < td) { td = d; tgt = st; }
+      }
+      if (tgt) this.damageStructure(tgt, W.ramDamagePerTick, { tribeId: ram.tribe, familyId: ram._fam, id: ram.owner, alive: true });
     }
 
     this._updateProjectiles(dt, entities);

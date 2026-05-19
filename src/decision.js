@@ -274,20 +274,45 @@ export function decide(self, p, tick, rng) {
     }
   }
 
-  // --- Raiding: a hungry, aggressive tribe strips a rival's stores ---
-  let enemyStruct = null;
+  // --- Raiding & siege: hunger raids stores; blood feuds wage war ---
+  let enemyStruct = null, enemyCentre = null;
   for (const { st, dist } of p.structures) {
-    if (mine(st) || st.tribe == null) continue;
+    if (mine(st) || st.tribe == null || st.type === 'ram') continue;
     if (st.type === 'storehouse' || st.type === 'house' || st.type === 'center') {
       if (!enemyStruct || dist < enemyStruct.dist) enemyStruct = { st, dist };
+      if (st.type === 'center' && (!enemyCentre || dist < enemyCentre.dist)) enemyCentre = { st, dist };
     }
   }
-  // Raiding is a hunger-driven last resort, not constant warfare.
-  if (enemyStruct && deficit > 0.3) {
+  const grudge = enemyStruct ? self.world.feud(self.tribeId, enemyStruct.st.tribe) : 0;
+  // Raiding is a hunger-driven last resort...
+  if (enemyStruct && (deficit > 0.3 || grudge > 0.4)) {
     const greed = st_food(enemyStruct.st) ? 1.2 : 0.45;
     add('RAID',
-      (t.aggression * (0.4 + deficit) + t.riskTolerance * 0.4 - t.caution * 0.6) * greed,
+      (t.aggression * (0.4 + deficit) + grudge * 0.7 + t.riskTolerance * 0.4 - t.caution * 0.6) * greed,
       { target: enemyStruct.st.pos, struct: enemyStruct.st });
+  }
+  // ...but a serious blood feud escalates to war: bands of warriors march
+  // on the enemy even from afar, raid it, and raise rams to raze its
+  // town centre and break the clan.
+  const war = self.world.warTarget(self, CONFIG.feud.warThreshold);
+  if (war) {
+    const wf = self.world.feud(self.tribeId, war.st.tribe);
+    const zeal = t.aggression * (0.8 + wf * 0.5) + t.loyalty * 0.5 - t.caution * 0.4;
+    if (self.energy > 40) {
+      // March on the foe — RAID handles closing the distance and the hit.
+      add('RAID', 0.7 + zeal, { target: war.st.pos, struct: war.st });
+      if (wf >= CONFIG.war.feudToSiege && self.wood >= 2 &&
+          self.energy >= CONFIG.war.siegeMinEnergy && self._buildCooldown <= 0) {
+        const tgt = war.centre ?? war.st;
+        add('SIEGE', 1.1 + zeal, { target: tgt.pos, struct: tgt });
+      }
+    }
+  }
+  // Local siege of a perceived enemy centre when already at war nearby.
+  if (grudge >= CONFIG.war.feudToSiege && enemyCentre && self.wood >= 2 &&
+      self.energy >= CONFIG.war.siegeMinEnergy && self._buildCooldown <= 0) {
+    add('SIEGE', (1.0 + t.aggression + grudge * 0.5 + t.loyalty * 0.4) - t.caution * 0.3,
+      { target: enemyCentre.st.pos, struct: enemyCentre.st });
   }
 
   // --- Nature & technology: wood -> weapons -> hunting, and farming ---

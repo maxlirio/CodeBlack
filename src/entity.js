@@ -436,11 +436,39 @@ export class Entity {
               st.store.food -= loot;
               this.energy = clamp(this.energy + loot, 0, CONFIG.entity.maxEnergy);
             }
-            this.world.damageStructure(st, this._meleeDamage());
+            this.world.damageStructure(st, this._meleeDamage(), this);
             this._useTool();
             this.energy -= 2;
             this.memory.remember('raided', tick, st.pos, 0.5);
             want = 'attack';
+          }
+        } else want = 'idle';
+        break;
+      }
+      case 'SIEGE': {
+        // Wheel a battering ram up to an enemy structure. Once parked it
+        // grinds the wall/centre down on its own (handled in world.update).
+        const st = choice.struct;
+        const wspec = CONFIG.structures.types.ram;
+        if (st && this.world.structures.includes(st) && this.wood >= 2 &&
+            this.energy >= wspec.minEnergy && this._buildCooldown <= 0) {
+          const dx = st.pos.x - this.pos.x, dz = st.pos.z - this.pos.z;
+          const d = Math.hypot(dx, dz) || 1;
+          if (d > CONFIG.war.ramReach - 1) {
+            want = this._moveToward(st.pos, 'run', dt);
+          } else {
+            this._buildTimer = (this._buildTimer ?? 0) + dt;
+            want = 'build';
+            if (this._buildTimer > 1.6) {
+              const facing = Math.atan2(dx, dz);
+              const rx = this.pos.x + (dx / d) * 1.5, rz = this.pos.z + (dz / d) * 1.5;
+              this.world.addStructure({ x: rx, z: rz, facing }, this.tribeColor, 'ram', this);
+              this.wood -= 2;
+              this.energy -= wspec.cost;
+              this._buildTimer = 0;
+              this._buildCooldown = 16;
+              this.memory.remember('sieged', tick, st.pos, 0.6);
+            }
           }
         } else want = 'idle';
         break;
@@ -517,7 +545,7 @@ export class Entity {
         if (!hit) for (const st of this.world.structures) {
           if (st.tribe != null && st.tribe !== this.tribeId &&
               inArc(st.pos.x, st.pos.z, CONFIG.entity.attackRadius + st.radius + 1)) {
-            this.world.damageStructure(st, this._meleeDamage());
+            this.world.damageStructure(st, this._meleeDamage(), this);
             hit = true; break;
           }
         }
@@ -536,7 +564,8 @@ export class Entity {
               : CONFIG.hunt.unarmedDamage;
             const killed = a.hurt(dmg);
             this._useTool();
-            // A boar gores a hunter who closes bare-handed.
+            // Big tanky game (a boar) is a party effort — call kin in.
+            if (!killed && a.gore) this.signal = { type: 'RALLY', tick };
             if (!killed && a.gore && !this.tool) this.energy -= a.gore;
             this.energy -= 2;
             want = 'attack';
