@@ -90,9 +90,14 @@ export function decide(self, p, tick, rng) {
   const add = (action, score, data = {}) => {
     if (score <= 0) return;
     let s = score * (W[action] ?? 1) * SK.bonusFor(action) * (1 + rng.range(-noise, noise));
-    // Commitment: keep doing what you're doing unless something is clearly
-    // better — this kills the every-tick twitch between near-equal options.
-    if (action === self.action) s *= 1.22;
+    // Commitment: keep doing what you're doing — but only if it's actually
+    // making progress (a stalled goal gets no bonus, so the agent breaks
+    // out and tries something else instead of freezing).
+    if (action === self.action && !self._stalled) s *= 1.22;
+    // Hunger is non-negotiable: well past commitment, getting fed wins.
+    if ((action === 'EAT' || action === 'SEEK_RESOURCE') && deficit > 0.4) {
+      s *= 1 + (deficit - 0.4) * 3;
+    }
     cand.push({ action, score: s, ...data });
   };
 

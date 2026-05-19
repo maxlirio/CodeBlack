@@ -8,9 +8,9 @@ export const CONFIG = {
   },
 
   nature: {
-    bushCount: 140,           // wild berry bushes — scaled for a bigger pop
-    bushEnergy: 34,
-    bushRegrowTicks: 560,
+    bushCount: 150,           // wild berry bushes — scaled for a bigger pop
+    bushEnergy: 38,
+    bushRegrowTicks: 520,
     forests: 10,              // tree clusters
     treesPerForest: 9,
     treeWood: 4,              // wood units per tree before it is depleted
@@ -53,7 +53,7 @@ export const CONFIG = {
     runSpeed: 6.4,
     turnRate: 7.0,
     maxEnergy: 100,
-    energyDrainPerSecond: 0.78,
+    energyDrainPerSecond: 0.7,
     runEnergyMultiplier: 2.0,
     eatRadius: 2.2,
     interactRadius: 2.6,
@@ -93,17 +93,17 @@ export const CONFIG = {
   },
 
   mining: {
-    ore: 22,                  // boulders / mountain ore nodes
+    ore: 34,                  // boulders / mountain ore nodes (more reachable)
     yield: 1,                 // stone per swing
-    nodeStone: 5,             // stone before a node is spent
-    regrowTicks: 2400,
+    nodeStone: 8,             // stone before a node is spent
+    regrowTicks: 1800,
     reach: 2.4
   },
 
   landmarks: {
     mountains: 4,             // rocky peaks (solid; need a ladder to scale)
     lakes: 3,                 // water basins (skirted by reeds)
-    boulders: 26,             // scattered rocks, some ore-bearing
+    boulders: 44,             // scattered rocks, ~half ore-bearing
     flowerPatches: 30,
     deadTrees: 14,
     mushroomRings: 10

@@ -755,6 +755,12 @@ export class Entity {
         want = 'idle';
     }
 
+    // Did this action actually accomplish/advance anything? If it just
+    // stalled to 'idle', it doesn't earn the commitment bonus — that
+    // stops agents locking onto a goal they can't make progress toward.
+    this._stalled = (want === 'idle' && choice.action !== 'IDLE' &&
+      choice.action !== 'RETURN_HOME');
+
     // Map locomotion + transitions to an animation state.
     const speed = this.vel.length();
     if (want === 'walk' || want === 'run') {
