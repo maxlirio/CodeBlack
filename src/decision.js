@@ -417,6 +417,31 @@ export function decide(self, p, tick, rng) {
       add('FARM', 0.7 + t.caution * 0.5 + t.sociability * 0.4 + self.memory.valenceOf('farmed'),
         { farm: true });
     }
+    // Husbandry: a settled, careful villager fences a paddock by home and
+    // drives wild grazers into it where they fatten and breed.
+    const fenceSpec = CONFIG.structures.types.fence;
+    const fences = self.world.countStructures(self.home.pos.x, self.home.pos.z,
+      'fence', CONFIG.pen.radius + 4);
+    const husbandry = self.traits.caution > 0.45 || (self.learn.weights.FARM ?? 1) > 1.0;
+    if (fences < 8 && self.wood >= fenceSpec.wood && husbandry) {
+      const a = fences * 2.39996;                       // golden-angle ring
+      add('BUILD', 0.6 + t.caution * 0.5, {
+        build: 'fence',
+        spot: { x: self.home.pos.x + Math.sin(a) * CONFIG.pen.radius,
+                z: self.home.pos.z + Math.cos(a) * CONFIG.pen.radius },
+        facing: a + Math.PI / 2
+      });
+    }
+  }
+  // Drive a stray grazer home — it becomes calm, penned livestock there.
+  if (hasHome && danger < 0.25 &&
+      (self.traits.caution > 0.45 || (self.learn.weights.FARM ?? 1) > 1.0)) {
+    const beast = p.animals.find((x) => !x.animal.predator && !x.animal.horse &&
+      !x.animal.penned && x.dist < CONFIG.pen.herdRange);
+    if (beast) {
+      add('HERD', 0.7 + t.sociability * 0.4 + self.memory.valenceOf('herded'),
+        { animal: beast.animal });
+    }
   }
 
   // --- Exploration & maintenance ---

@@ -85,6 +85,13 @@ export const CONFIG = {
                ranged: { dmg: 12, speed: 46, range: 32 } }
   },
 
+  pen: {
+    radius: 11,               // a fenced paddock around a farmer's home
+    herdRange: 30,            // how far a farmer ranges to drive in stock
+    breedTicks: 1100,         // penned livestock multiply on this cadence
+    maxPenned: 8              // per paddock, before they stop breeding
+  },
+
   mining: {
     ore: 22,                  // boulders / mountain ore nodes
     yield: 1,                 // stone per swing
@@ -175,7 +182,8 @@ export const CONFIG = {
     retreatEnergy: 30,        // a bloodied warrior falls back
     captureEraReward: 4,      // era-progress the conqueror tribe gains
     captureEnergyReward: 28,  // morale/spoils for nearby victors
-    convertChance: 0.6        // odds a leaderless survivor joins the conqueror
+    convertChance: 0.6,       // odds a leaderless survivor joins the conqueror
+    crewRadius: 5             // a siege engine needs a tribe member this close
   },
 
   stockpile: {
@@ -301,6 +309,7 @@ export const ACTIONS = [
   'SIEGE',
   'TRADE',
   'TAME',
+  'HERD',
   'ATTACK'
 ];
 

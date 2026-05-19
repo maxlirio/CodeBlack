@@ -719,6 +719,25 @@ export class Entity {
         } else want = 'idle';
         break;
       }
+      case 'HERD': {
+        const a = choice.animal;
+        if (a && a.alive && !a.penned && this.home) {
+          const hp = this.home.pos;
+          if (a.pos.distanceTo(hp) < CONFIG.pen.radius) {
+            a.penned = true; a.penHome = { x: hp.x, z: hp.z };  // safely paddocked
+            this.memory.remember('herded', tick, a.pos, 0.7);
+            want = 'idle';
+          } else {
+            // Stand on the far side of the beast from home so its instinct
+            // to flee us pushes it toward the paddock.
+            const ux = a.pos.x - hp.x, uz = a.pos.z - hp.z;
+            const l = Math.hypot(ux, uz) || 1;
+            want = this._moveToward(
+              { x: a.pos.x + (ux / l) * 3, z: a.pos.z + (uz / l) * 3 }, 'run', dt);
+          }
+        } else want = 'idle';
+        break;
+      }
       case 'PLAYER_MOVE': {
         // Direct human steering. dir is a world-space XZ vector.
         const dx = choice.dir?.x ?? 0;
@@ -940,8 +959,10 @@ export class Entity {
     this.pos.z = fixed.z;
     const gy = this.world.heightAt(this.pos.x, this.pos.z);
     this.pos.y = gy;
-    this.mesh.userData.groundY = gy;
-    this.mesh.position.set(this.pos.x, gy, this.pos.z);
+    // Sit up on the horse's back when riding.
+    const ride = this._mounted() ? 1.05 : 0;
+    this.mesh.userData.groundY = gy + ride;
+    this.mesh.position.set(this.pos.x, gy + ride, this.pos.z);
     this.mesh.rotation.y = this.heading;
     this.vel.multiplyScalar(0.6); // damping; movement is re-driven each tick
   }

@@ -357,17 +357,29 @@ export class Animal {
       0.05 * (speed > 1 ? 1 : 0.2);
   }
 
-  // A tamed horse trots after its owner, hanging just behind them.
-  followUpdate(dt, owner) {
+  // Penned livestock: graze calmly, never flee, stay near the paddock.
+  grazeUpdate(dt, center, radius) {
     if (!this.alive) return;
-    const tx = owner.pos.x - Math.sin(owner.heading) * 2.4;
-    const tz = owner.pos.z - Math.cos(owner.heading) * 2.4;
-    const dx = tx - this.pos.x, dz = tz - this.pos.z;
-    const d = Math.hypot(dx, dz);
-    if (d > 1) {
-      this.heading = Math.atan2(dx, dz);
-      this._applyMove(Math.min(this.speed, d * 3), dt);
+    this._wanderT -= dt;
+    const far = Math.hypot(this.pos.x - center.x, this.pos.z - center.z) > radius * 0.8;
+    if (this._wanderT <= 0 || far) {
+      this._wanderT = this.rng.range(2, 5);
+      this.heading = far
+        ? Math.atan2(center.x - this.pos.x, center.z - this.pos.z)
+        : this.heading + this.rng.range(-1.2, 1.2);
     }
+    this._applyMove(this.speed * 0.3, dt);
+  }
+
+  // Ridden: the horse IS where its rider is, moving as one mount.
+  rideUpdate(owner) {
+    if (!this.alive) return;
+    this.pos.x = owner.pos.x;
+    this.pos.z = owner.pos.z;
+    this.pos.y = owner.pos.y;
+    this.heading = owner.heading;
+    this.mesh.position.set(this.pos.x, this.pos.y, this.pos.z);
+    this.mesh.rotation.y = this.heading - Math.PI / 2;
   }
 
   // Predator: stalk the supplied quarry (prey animal or vulnerable agent);

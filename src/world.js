@@ -413,6 +413,18 @@ export class World {
       lintel.position.y = 3.2;
       mesh.add(post(-1.6), post(1.6), lintel);
       radius = 2.1;
+    } else if (type === 'fence') {
+      const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.95 });
+      for (const sx of [-1.5, 0, 1.5]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.0, 0.12), wood);
+        post.position.set(sx, 0.5, 0); post.castShadow = true; mesh.add(post);
+      }
+      for (const ry of [0.4, 0.78]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.1, 0.08), wood);
+        rail.position.y = ry; mesh.add(rail);
+      }
+      mesh.rotation.y = pos.facing ?? 0;
+      radius = 1.4;
     } else if (type === 'storehouse') {
       // A squat hut with a conical thatch + a stacked-crate "stockpile".
       const body = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.9, 1.8, 7),
@@ -782,7 +794,18 @@ export class World {
   // snipe, catapults lob boulders that wreck buildings (with splash).
   _updateSiege(dt, entities) {
     const W = CONFIG.war;
+    const crewed = (s) => {
+      const r2 = (W.crewRadius ?? 4) ** 2;
+      for (const e of entities) {
+        if (!e.alive || e.inside) continue;
+        if (e.tribeId !== s.tribe && !(e.familyId != null && e.familyId === s._fam)) continue;
+        if ((e.pos.x - s.pos.x) ** 2 + (e.pos.z - s.pos.z) ** 2 < r2) return true;
+      }
+      return false;
+    };
     for (const s of this.structures) {
+      // A siege engine is dead weight without a crew to push & work it.
+      if ((s.type === 'ram' || s.type === 'ballista' || s.type === 'catapult') && !crewed(s)) continue;
       if (s.type === 'ram') {
         const t = this._nearestEnemyStruct(s, 999);
         if (!t) continue;
@@ -1079,8 +1102,10 @@ export class World {
           }
         }
       } else if (a.horse && a.tamed) {
-        if (a.ownerEntity && a.ownerEntity.alive) a.followUpdate(dt, a.ownerEntity);
+        if (a.ownerEntity && a.ownerEntity.alive) a.rideUpdate(a.ownerEntity);
         else { a.tamed = false; a.ownerEntity = null; }   // freed if owner dies
+      } else if (a.penned && a.penHome) {
+        a.grazeUpdate(dt, a.penHome, CONFIG.pen.radius); // calm livestock
       } else {
         let nd = Infinity, np = null;
         for (const e of entities) {
@@ -1119,6 +1144,22 @@ export class World {
         299, 'horse'));
     }
     if (tick % CONFIG.logistics.roadRecomputeTicks === 0) this.rebuildRoads();
+
+    // Penned livestock multiply — animal husbandry feeds a village.
+    if (tick % CONFIG.pen.breedTicks === 0) {
+      const pens = this.animals.filter((a) => a.alive && a.penned && a.penHome);
+      for (const a of pens) {
+        const near = pens.filter((b) =>
+          (b.penHome.x - a.penHome.x) ** 2 + (b.penHome.z - a.penHome.z) ** 2 < 4).length;
+        if (near < CONFIG.pen.maxPenned && this.rng.chance(0.5)) {
+          const calf = new Animal(this, this.rng,
+            a.pos.x + this.rng.range(-2, 2), a.pos.z + this.rng.range(-2, 2),
+            900, 'herbivore', a.species);
+          calf.penned = true; calf.penHome = { ...a.penHome };
+          this.animals.push(calf);
+        }
+      }
+    }
 
     this._updateSiege(dt, entities);
     this._updateProjectiles(dt, entities);
