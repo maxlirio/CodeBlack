@@ -19,7 +19,7 @@ export function perceive(self, entities, world, tick) {
   const out = { entities: [], resources: [], structures: [], signals: [], trees: [], animals: [] };
 
   for (const e of entities) {
-    if (e === self || !e.alive) continue;
+    if (e === self || !e.alive || e.inside) continue; // sheltered = unseen
     const dx = e.pos.x - self.pos.x;
     const dz = e.pos.z - self.pos.z;
     const d2 = dx * dx + dz * dz;

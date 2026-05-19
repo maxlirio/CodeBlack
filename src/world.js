@@ -122,11 +122,31 @@ export class World {
     const L = CONFIG.logistics;
     const centres = this.structures.filter((s) => s.type === 'center');
     const stores = this.structures.filter((s) => s.type === 'storehouse');
+    const houses = this.structures.filter((s) => s.type === 'house');
     const links = [];
-    for (const c of centres) {
-      for (const s of stores) {
-        if (s.tribe !== c.tribe) continue;
-        if (Math.hypot(s.pos.x - c.pos.x, s.pos.z - c.pos.z) < L.roadMaxLen) links.push([c, s]);
+    // Every storehouse is a hub: roads radiate to the centre and to the
+    // village's houses, so any settled village gets visible streets.
+    const hubs = stores.length ? stores : centres;
+    for (const h of hubs) {
+      for (const c of centres) {
+        if (c.tribe === h.tribe && c !== h &&
+            Math.hypot(c.pos.x - h.pos.x, c.pos.z - h.pos.z) < L.roadMaxLen) links.push([h, c]);
+      }
+      let n = 0;
+      for (const ho of houses) {
+        if (ho.tribe !== h.tribe) continue;
+        if (Math.hypot(ho.pos.x - h.pos.x, ho.pos.z - h.pos.z) < CONFIG.structures.villageRadius) {
+          links.push([h, ho]); if (++n >= 6) break;
+        }
+      }
+    }
+    for (let i = 0; i < stores.length; i++) {
+      for (let j = i + 1; j < stores.length; j++) {
+        const a = stores[i], b = stores[j];
+        const d = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
+        if (d < L.roadMaxLen && (a.tribe === b.tribe || this.bond(a.tribe, b.tribe) > 0.4)) {
+          links.push([a, b]);
+        }
       }
     }
     for (let i = 0; i < centres.length; i++) {
@@ -609,7 +629,7 @@ export class World {
           if (d < bd) { bd = d; pr.target = a; }
         }
         for (const e of entities) {
-          if (!valid(pr, e)) continue;
+          if (e.inside || !valid(pr, e)) continue;
           const d = (e.pos.x - pr.pos.x) ** 2 + (e.pos.z - pr.pos.z) ** 2;
           if (d < bd) { bd = d; pr.target = e; }
         }
@@ -639,7 +659,7 @@ export class World {
       }
       if (!done) {
         for (const e of entities) {
-          if (!e.alive || e === pr.owner) continue;
+          if (!e.alive || e.inside || e === pr.owner) continue;
           if (pr.owner && (e.tribeId === pr.owner.tribeId || pr.owner.kin?.has(e.id))) continue;
           if (pr.pos.distanceTo(e.pos) < P.hitRadius) {
             e.damage(pr.dmg, pr.owner); done = true; break;
@@ -782,7 +802,7 @@ export class World {
           if (d < qd && d < P.senseRadius) { qd = d; q = o; }
         }
         for (const e of entities) {
-          if (!e.alive) continue;
+          if (!e.alive || e.inside) continue;
           const d = e.pos.distanceTo(a.pos);
           const vulnerable = e.energy < 45 || (e._dangerBefore ?? 0) === 0;
           if (d < qd && d < P.senseRadius && vulnerable) { qd = d; q = e; }
@@ -803,7 +823,7 @@ export class World {
       } else {
         let nd = Infinity, np = null;
         for (const e of entities) {
-          if (!e.alive) continue;
+          if (!e.alive || e.inside) continue;
           const d = e.pos.distanceTo(a.pos);
           if (d < nd) { nd = d; np = e.pos; }
         }

@@ -144,7 +144,7 @@ export const CONFIG = {
   },
 
   war: {
-    feudToSiege: 1.0,         // clan hatred at which siege engines appear
+    feudToSiege: 0.7,         // clan hatred at which siege engines appear
     ramDamagePerTick: 1.6,    // a ram batters the nearest enemy structure
     ramReach: 6,              // how close the ram works
     siegeMinEnergy: 48,
@@ -178,7 +178,7 @@ export const CONFIG = {
     decayPerTick: 0.00022,    // grudges cool slowly over time
     hostility: 0.5,           // how strongly feud translates into aggression
     avengeRadius: 30,         // a fresh killing enrages nearby kin/tribe
-    warThreshold: 1.0         // at/above this a clan marches on the enemy
+    warThreshold: 0.7         // at/above this a clan marches on the enemy
   },
 
   logistics: {

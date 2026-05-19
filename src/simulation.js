@@ -63,11 +63,29 @@ export class Simulation {
     // one (combat is on the spacebar; the mouse only aims).
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
-      if (this.interior) this._interiorClick(e);
-      else if (this._placing) this._confirmPlacing();   // click = place here
-      else if (this.mode === 'play') this._attackQueued = true; // click = attack
-      else this._pick(e);
+      if (this.mode === 'play') {
+        // First click captures the mouse (cursor hidden, look becomes
+        // smooth, no stray clicks). Subsequent clicks are game actions.
+        if (!this._locked) { this._lock(); return; }
+        if (this.interior) this._interiorClick(e);
+        else if (this._placing) this._confirmPlacing();
+        else this._attackQueued = true;
+      } else this._pick(e);
     });
+    const el = this.renderer.domElement;
+    document.addEventListener('pointerlockchange', () => {
+      this._locked = document.pointerLockElement === el;
+    });
+  }
+
+  _lock() {
+    const el = this.renderer.domElement;
+    if (el.requestPointerLock) { try { el.requestPointerLock(); } catch { /* ignore */ } }
+  }
+
+  _unlock() {
+    if (document.pointerLockElement) document.exitPointerLock?.();
+    this._locked = false;
   }
 
   // Inside a building: a click works the prop under the crosshair
@@ -153,6 +171,7 @@ export class Simulation {
     } else if (mode === 'play') {
       c.enabled = false; // hand the camera to our collision-aware rig
     }
+    this.renderer.domElement.style.cursor = mode === 'play' ? 'none' : 'default';
     this._syncModeUI();
   }
 
@@ -161,6 +180,7 @@ export class Simulation {
     this.player = this.selected;
     this.player.controller = (self, p) => this._playerChoice(self, p);
     this._setMode('play');
+    this._lock();   // capture the mouse for smooth, click-safe control
   }
 
   _exitPlay() {
@@ -172,6 +192,7 @@ export class Simulation {
     if (this.player) this.player.controller = null;
     this.player = null;
     this._attackQueued = false;
+    this._unlock();
     this._setMode(this.selected && this.selected.alive ? 'follow' : 'free');
   }
 

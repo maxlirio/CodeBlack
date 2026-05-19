@@ -42,6 +42,7 @@ export class Interior {
     this.bound = 5.5;
     this.eye = 1.7;
     this.openSky = false;
+    this.occ = new Map();      // entityId -> { fig, ent, tx, tz }
 
     ({ house: () => this._house(),
        storehouse: () => this._storehouse(),
@@ -89,23 +90,8 @@ export class Interior {
     this.lamp.position.set(0, 2.5, -2);
     this.lamp.color.setHex(0xff9a4a);
 
-    const kinIds = [...this.player.kin].slice(0, 4);
-    const spots = [[-2.5, 1.5], [2.5, 1.5], [-1.6, -1], [1.8, -1.2]];
-    kinIds.forEach((id, i) => {
-      const [x, z] = spots[i] ?? [i, 2];
-      const fig = createHumanoid(this.player.tribeColor.clone());
-      fig.scale.setScalar(0.9);
-      fig.position.set(x, 0, z);
-      fig.rotation.y = Math.atan2(-x, 3 + z);
-      fig.userData.groundY = 0;
-      this._addProp(fig, { kind: 'talk', kinId: id }, `Talk to kin #${id}`);
-    });
-    if (!kinIds.length) {
-      const fig = createHumanoid(this.player.tribeColor.clone());
-      fig.position.set(0, 0, 1.5);
-      fig.userData.groundY = 0;
-      this._addProp(fig, { kind: 'talk' }, 'Sit by the fire');
-    }
+    // The people are no longer dummies — _syncOccupants() fills the room
+    // with whoever actually walked in (see update()).
   }
 
   _storehouse() {
@@ -181,14 +167,15 @@ export class Interior {
       return 'No wood here, and none on you.';
     }
     if (act.kind === 'talk') {
-      const e = act.kinId != null && this.world.entities
-        ? this.world.entities.find((x) => x.id === act.kinId && x.alive) : null;
+      const e = act.entId != null && this.world.entities
+        ? this.world.entities.find((x) => x.id === act.entId && x.alive) : null;
       if (e) {
         pl.social.cooperate(e.id); e.social.cooperate(pl.id);
         e.social.familiar(pl.id); pl.social.familiar(e.id);
-        return `You share news with kin #${e.id}. Trust deepens.`;
+        const kin = pl.kin.has(e.id) ? 'kin' : 'a tribemate';
+        return `You share news with ${kin} #${e.id}. Trust deepens.`;
       }
-      return 'You rest a moment by the fire. Energy eases.';
+      return 'They have moved on. The room is quiet.';
     }
     if (act.kind === 'rally') {
       pl.signal = { type: 'RALLY', tick: this.world.tickNow ?? 0 };
@@ -197,7 +184,54 @@ export class Interior {
     return null;
   }
 
+  // Mirror the real agents currently sheltering in this building as
+  // figures milling about the room — click one to speak with them.
+  _syncOccupants(dt) {
+    const here = (this.world.entities || []).filter(
+      (e) => e.alive && e.inside === this.struct);
+    const live = new Set(here.map((e) => e.id));
+    for (const [id, o] of this.occ) {
+      if (!live.has(id)) {
+        this.scene.remove(o.fig);
+        const i = this.props.indexOf(o.fig); if (i >= 0) this.props.splice(i, 1);
+        this.occ.delete(id);
+      }
+    }
+    here.slice(0, 8).forEach((e, idx) => {
+      let o = this.occ.get(e.id);
+      if (!o) {
+        const fig = createHumanoid((e.tribeColor || this.player.tribeColor).clone());
+        fig.scale.setScalar(0.92);
+        const a = (idx / 8) * Math.PI * 2;
+        fig.position.set(Math.sin(a) * 2.4, 0, Math.cos(a) * 2.4 - 0.5);
+        fig.userData.groundY = 0;
+        fig.userData.action = { kind: 'talk', entId: e.id };
+        fig.userData.label = `Talk to #${e.id}`;
+        this.scene.add(fig);
+        this.props.push(fig);
+        o = { fig, ent: e, tx: fig.position.x, tz: fig.position.z, t: 0 };
+        this.occ.set(e.id, o);
+      }
+      // Gentle wander so the room feels alive.
+      o.t -= dt;
+      if (o.t <= 0) {
+        o.t = 2 + Math.random() * 3;
+        o.tx = (Math.random() * 2 - 1) * (this.bound - 1);
+        o.tz = (Math.random() * 2 - 1) * (this.bound - 1);
+      }
+      const f = o.fig;
+      const dx = o.tx - f.position.x, dz = o.tz - f.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.15) {
+        f.position.x += (dx / d) * Math.min(1.4 * dt, d);
+        f.position.z += (dz / d) * Math.min(1.4 * dt, d);
+        f.rotation.y = Math.atan2(dx, dz);
+      }
+    });
+  }
+
   update(dt) {
+    this._syncOccupants(dt);
     if (this._fire) {
       const s = 0.85 + Math.sin(performance.now() * 0.012) * 0.18;
       this._fire.scale.set(1, s, 1);

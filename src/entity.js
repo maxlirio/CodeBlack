@@ -65,6 +65,8 @@ export class Entity {
     this._toolMesh = null;
     this._shootCd = 0;
     this.mount = null;          // a tamed horse following/carrying this agent
+    this.inside = null;         // structure this agent is currently within
+    this._insideUntil = 0;
 
     this.action = 'IDLE';
     this.animState = 'idle';
@@ -116,6 +118,7 @@ export class Entity {
   tick(entities, tick, dt) {
     if (!this.alive) return;
     this.age += dt;
+    if (this.inside) { this._insideTick(entities, tick, dt); return; }
     this._buildCooldown = Math.max(0, this._buildCooldown - dt);
     this._shootCd = Math.max(0, this._shootCd - 1);
 
@@ -319,12 +322,29 @@ export class Entity {
         const dest = this.home ? this.home.pos : target;
         if (dest) {
           const d = Math.hypot(this.pos.x - dest.x, this.pos.z - dest.z);
-          want = (this.home && d < CONFIG.home.restRadius * 0.6) ? 'idle'
-            : this._moveToward(dest, this._dangerBefore > 0 ? 'run' : 'walk', dt);
+          if (this.home && d < 2.6) {
+            // Step inside to rest out of sight (you'll find them in there).
+            this._enterBuilding(this.home, tick, this.rng.int(220, 620));
+            want = 'idle';
+          } else {
+            want = (this.home && d < CONFIG.home.restRadius * 0.6) ? 'idle'
+              : this._moveToward(dest, this._dangerBefore > 0 ? 'run' : 'walk', dt);
+          }
         } else want = 'idle';
         break;
       }
       case 'DEFEND': {
+        // Archers fall back to a nearby friendly tower and man it.
+        if (this._rangedReach() > 0) {
+          const tw = this.world.nearestStructure(this.pos.x, this.pos.z, 'tower',
+            (s) => s.tribe === this.tribeId || this.kin.has(s.owner));
+          if (tw && tw.dist < 24) {
+            if (tw.dist > 2.4) { want = this._moveToward(tw.st.pos, 'run', dt); break; }
+            this._enterBuilding(tw.st, tick, 0);
+            want = 'idle';
+            break;
+          }
+        }
         // Hold the line between home and the nearest intruder.
         const v = choice.victim;
         if (v && v.alive) {
@@ -780,6 +800,84 @@ export class Entity {
     return r ? r.range : 0;
   }
 
+  // Time spent within a building. Shelters (house/store/centre) hide the
+  // agent and let it rest; a manned tower keeps it visible up top, loosing
+  // arrows at anything threatening the settlement.
+  _insideTick(entities, tick, dt) {
+    const st = this.inside;
+    if (!st || !this.world.structures.includes(st)) { this._leaveBuilding(); return; }
+    const sec = 1 / CONFIG.sim.tickRate;
+
+    if (st.type === 'tower') {
+      this.mesh.visible = true;
+      this.mesh.position.set(st.pos.x, st.pos.y + 6.4, st.pos.z); // up on the deck
+      this.energy = clamp(this.energy - CONFIG.entity.energyDrainPerSecond * 0.4 * dt,
+        0, CONFIG.entity.maxEnergy);
+      this._shootCd = Math.max(0, this._shootCd - 1);
+      let foe = null, fd = 34;
+      for (const a of this.world.animals) {
+        if (!a.alive || !a.predator) continue;
+        const d = Math.hypot(a.pos.x - st.pos.x, a.pos.z - st.pos.z);
+        if (d < fd) { fd = d; foe = a; }
+      }
+      for (const e of entities) {
+        if (!e.alive || e.inside || e === this) continue;
+        if (e.tribeId === this.tribeId || this.kin.has(e.id)) continue;
+        if (this.world.feud(this.tribeId, e.tribeId) < CONFIG.tribe.rivalHostility &&
+            e.traits.aggression < 0.55) continue;
+        const d = Math.hypot(e.pos.x - st.pos.x, e.pos.z - st.pos.z);
+        if (d < fd) { fd = d; foe = e; }
+      }
+      if (foe && this._shootCd <= 0) {
+        const top = new THREE.Vector3(st.pos.x, st.pos.y + 6.4, st.pos.z);
+        const o = { x: foe.pos.x - st.pos.x, z: foe.pos.z - st.pos.z };
+        this.world.spawnProjectile(top, o,
+          11 + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra, this, 'arrow', 44);
+        this._shootCd = 22;
+      }
+      // Stand down once it's been quiet for a while.
+      if (!foe) { this._insideUntil -= 1; if (this._insideUntil <= 0) this._leaveBuilding(); }
+      else this._insideUntil = 400;
+      if (this.energy <= 0) this.die();
+      return;
+    }
+
+    // Shelter: tucked away out of sight, resting (fed by the granary too).
+    this.mesh.visible = false;
+    let regen = CONFIG.home.restRegenPerSecond * sec;
+    const gr = this.world.nearestStructure?.(st.pos.x, st.pos.z, 'storehouse',
+      (s) => s.store && s.store.food > 1);
+    if (gr && gr.dist < CONFIG.stockpile.feedRadius) {
+      const give = Math.min(CONFIG.stockpile.feedRegenBonus * sec,
+        gr.st.store.food / CONFIG.stockpile.feedCostPerEnergy);
+      regen += give; gr.st.store.food -= give * CONFIG.stockpile.feedCostPerEnergy;
+    }
+    this.energy = clamp(this.energy + regen, 0, CONFIG.entity.maxEnergy);
+    this.social.decay();
+    if (tick >= this._insideUntil || this.energy < 38) this._leaveBuilding();
+    if (this.energy <= 0) this.die();
+  }
+
+  _enterBuilding(st, tick, ticks) {
+    this.inside = st;
+    this._insideUntil = st.type === 'tower' ? 400 : tick + ticks;
+    if (st.type !== 'tower') this.mesh.visible = false;
+  }
+
+  _leaveBuilding() {
+    const st = this.inside;
+    this.inside = null;
+    this.mesh.visible = true;
+    if (st) {
+      const a = this.rng.range(-Math.PI, Math.PI);
+      this.pos.x = st.pos.x + Math.sin(a) * (st.radius + 1.5);
+      this.pos.z = st.pos.z + Math.cos(a) * (st.radius + 1.5);
+      this.pos.y = this.world.heightAt(this.pos.x, this.pos.z);
+      this.mesh.position.copy(this.pos);
+    }
+    this._shootCd = 6;
+  }
+
   // Riding a tamed horse and travelling a paved road both speed you up.
   _mounted() {
     if (this.mount && (!this.mount.alive || this.mount.ownerEntity !== this)) this.mount = null;
@@ -888,7 +986,7 @@ export class Entity {
   }
 
   render(dt) {
-    if (!this.alive) return;
+    if (!this.alive || this.inside) return; // hidden indoors / posed on the tower
     animateHumanoid(this.mesh, this.animState, dt, clamp(this.vel.length() / CONFIG.entity.runSpeed, 0, 1));
   }
 }
