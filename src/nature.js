@@ -148,13 +148,17 @@ export class Animal {
     this.herd = herd;
     this.kind = kind;
     this.predator = kind === 'wolf';
-    if (!this.predator && !species) species = Animal.pickSpecies(rng);
-    this.species = this.predator ? 'wolf' : species;
-    const sp = this.predator ? null : CONFIG.nature.species[species];
+    this.horse = kind === 'horse';
+    this.tamed = false;
+    this.ownerEntity = null;
+    if (kind === 'herbivore' && !species) species = Animal.pickSpecies(rng);
+    this.species = this.predator ? 'wolf' : this.horse ? 'horse' : species;
+    const sp = (this.predator || this.horse) ? null : CONFIG.nature.species[species];
+    const L = CONFIG.logistics;
     this.alive = true;
-    this.health = this.predator ? CONFIG.predator.health : sp.health;
-    this.speed = this.predator ? CONFIG.predator.speed : sp.speed;
-    this.food = this.predator ? CONFIG.predator.health : sp.food;  // carcass yield
+    this.health = this.predator ? CONFIG.predator.health : this.horse ? L.horseHealth : sp.health;
+    this.speed = this.predator ? CONFIG.predator.speed : this.horse ? L.horseSpeed : sp.speed;
+    this.food = this.predator ? CONFIG.predator.health : this.horse ? L.horseFood : sp.food;
     this.gore = sp?.gore ?? 0;
     this.home = new THREE.Vector2(x, z);
     this.pos = new THREE.Vector3(x, world.heightAt(x, z), z);
@@ -164,8 +168,9 @@ export class Animal {
     this._strikeCd = 0;
 
     const g = new THREE.Group();
-    const scale = this.predator ? 0.78 : sp.scale;
-    const hide = this.predator ? MAT.wolf : Animal._hideMat(sp.color);
+    const scale = this.predator ? 0.78 : this.horse ? 1.15 : sp.scale;
+    const hide = this.predator ? MAT.wolf
+      : this.horse ? Animal._hideMat(0x6b4a2a) : Animal._hideMat(sp.color);
     const dark = this.predator ? MAT.wolfDark : MAT.hideDark;
     const body = new THREE.Mesh(ANIMAL_BODY, hide);
     body.position.y = 0.95;
@@ -230,6 +235,19 @@ export class Animal {
     this.mesh.rotation.y = this.heading - Math.PI / 2;
     this.mesh.position.y += Math.abs(Math.sin(performance.now() * 0.006 + this.pos.x)) *
       0.05 * (speed > 1 ? 1 : 0.2);
+  }
+
+  // A tamed horse trots after its owner, hanging just behind them.
+  followUpdate(dt, owner) {
+    if (!this.alive) return;
+    const tx = owner.pos.x - Math.sin(owner.heading) * 2.4;
+    const tz = owner.pos.z - Math.cos(owner.heading) * 2.4;
+    const dx = tx - this.pos.x, dz = tz - this.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 1) {
+      this.heading = Math.atan2(dx, dz);
+      this._applyMove(Math.min(this.speed, d * 3), dt);
+    }
   }
 
   // Predator: stalk the supplied quarry (prey animal or vulnerable agent);

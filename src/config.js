@@ -177,6 +177,21 @@ export const CONFIG = {
     warThreshold: 1.0         // at/above this a clan marches on the enemy
   },
 
+  logistics: {
+    roadRecomputeTicks: 120,  // how often the road network is re-derived
+    roadMaxLen: 130,          // longest link the network will pave
+    roadWidth: 2.6,           // half-width that counts as "on the road"
+    roadSpeedMul: 1.45,       // travel bonus on a road
+    horses: 6,                // wild horses roaming the map
+    horseSpeed: 8.4,          // faster than anything else
+    horseHealth: 26,
+    horseFood: 30,
+    tameRadius: 2.6,          // reach to attempt taming
+    tameChance: 0.06,         // per-attempt odds (curiosity/calm helps)
+    mountSpeedMul: 1.7,       // a rider on a tamed horse
+    wagonTradeBonus: 2.2      // a horse-drawn caravan hauls far more
+  },
+
   trade: {
     minSurplus: 18,           // food a village stockpile must hold to export
     caravanFood: 12,          // food moved per successful caravan
@@ -255,6 +270,7 @@ export const ACTIONS = [
   'RAID',
   'SIEGE',
   'TRADE',
+  'TAME',
   'ATTACK'
 ];
 

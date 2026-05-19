@@ -328,6 +328,15 @@ export function decide(self, p, tick, rng) {
     }
   }
 
+  // --- Logistics: tame a wild horse to ride & haul ---
+  if (!self._mounted() && danger < 0.3 && self.energy > 45) {
+    const wh = self.world.nearestWildHorse(self.pos.x, self.pos.z);
+    if (wh && wh.dist < CONFIG.entity.perceptionRadius) {
+      add('TAME', 0.6 + t.curiosity * 1.3 + t.riskTolerance * 0.4 - t.caution * 0.3,
+        { target: wh.animal.pos, horse: wh.animal });
+    }
+  }
+
   // --- Nature & technology: wood -> weapons -> hunting, and farming ---
   const tree = p.trees[0];
   const prey = p.animals.find((a) => !a.animal.predator)?.animal

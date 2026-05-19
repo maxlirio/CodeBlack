@@ -106,6 +106,75 @@ export class World {
           cx + this.rng.range(-6, 6), cz + this.rng.range(-6, 6), 100 + p, 'wolf'));
       }
     }
+    for (let i = 0; i < CONFIG.logistics.horses; i++) {
+      this.animals.push(new Animal(this, this.rng,
+        this.rng.range(-r, r), this.rng.range(-r, r), 200 + i, 'horse'));
+    }
+    this.roads = [];
+    this.roadGroup = new THREE.Group();
+    this.scene.add(this.roadGroup);
+  }
+
+  // Pave straight roads between a settlement's centre and its granaries,
+  // and along live trade routes between bonded clans. Re-derived rarely.
+  rebuildRoads() {
+    const L = CONFIG.logistics;
+    const centres = this.structures.filter((s) => s.type === 'center');
+    const stores = this.structures.filter((s) => s.type === 'storehouse');
+    const links = [];
+    for (const c of centres) {
+      for (const s of stores) {
+        if (s.tribe !== c.tribe) continue;
+        if (Math.hypot(s.pos.x - c.pos.x, s.pos.z - c.pos.z) < L.roadMaxLen) links.push([c, s]);
+      }
+    }
+    for (let i = 0; i < centres.length; i++) {
+      for (let j = i + 1; j < centres.length; j++) {
+        const a = centres[i], b = centres[j];
+        const d = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
+        if (d < L.roadMaxLen && (a.tribe === b.tribe || this.bond(a.tribe, b.tribe) > 0.4)) {
+          links.push([a, b]);
+        }
+      }
+    }
+    this.roadGroup.clear();
+    this.roads = links.map(([a, b]) => {
+      const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(L.roadWidth * 2, 0.08, len),
+        this._roadMat ??= new THREE.MeshStandardMaterial({ color: 0x6b5b44, roughness: 1 }));
+      mesh.position.set((a.pos.x + b.pos.x) / 2,
+        this.heightAt((a.pos.x + b.pos.x) / 2, (a.pos.z + b.pos.z) / 2) + 0.05,
+        (a.pos.z + b.pos.z) / 2);
+      mesh.rotation.y = Math.atan2(dx, dz);
+      mesh.receiveShadow = true;
+      this.roadGroup.add(mesh);
+      return { ax: a.pos.x, az: a.pos.z, bx: b.pos.x, bz: b.pos.z, len2: len * len };
+    });
+  }
+
+  // Is this point on a paved road? (cheap point-to-segment test)
+  onRoad(x, z) {
+    const w2 = CONFIG.logistics.roadWidth ** 2;
+    for (const r of this.roads || []) {
+      const dx = r.bx - r.ax, dz = r.bz - r.az;
+      let t = ((x - r.ax) * dx + (z - r.az) * dz) / r.len2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = r.ax + dx * t, pz = r.az + dz * t;
+      if ((x - px) ** 2 + (z - pz) ** 2 < w2) return true;
+    }
+    return false;
+  }
+
+  nearestWildHorse(x, z) {
+    let best = null, bd = Infinity;
+    for (const a of this.animals) {
+      if (!a.alive || !a.horse || a.tamed) continue;
+      const d = (a.pos.x - x) ** 2 + (a.pos.z - z) ** 2;
+      if (d < bd) { bd = d; best = a; }
+    }
+    return best ? { animal: best, dist: Math.sqrt(bd) } : null;
   }
 
   _addBush(x, z) {
@@ -689,6 +758,9 @@ export class World {
             q.memory?.remember('threat', tick, a.pos, -1);
           }
         }
+      } else if (a.horse && a.tamed) {
+        if (a.ownerEntity && a.ownerEntity.alive) a.followUpdate(dt, a.ownerEntity);
+        else { a.tamed = false; a.ownerEntity = null; }   // freed if owner dies
       } else {
         let nd = Infinity, np = null;
         for (const e of entities) {
@@ -708,18 +780,25 @@ export class World {
       if (!this.animals[i].alive) { this.animals[i].remove(); this.animals.splice(i, 1); }
     }
     const herbTarget = C.herds * C.animalsPerHerd;
-    const herbs = this.animals.filter((a) => !a.predator).length;
+    const herbs = this.animals.filter((a) => !a.predator && !a.horse).length;
     if (herbs < herbTarget && this.rng.chance(0.02)) {
       const r = this.size * 0.9;
       this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
         this.rng.int(0, C.herds - 1)));
     }
-    const wolfTarget = P.packs * P.perPack;
-    if (this.animals.length - herbs < wolfTarget && this.rng.chance(0.006)) {
+    const wolves = this.animals.filter((a) => a.predator).length;
+    if (wolves < P.packs * P.perPack && this.rng.chance(0.006)) {
       const r = this.size * 0.9;
       this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
         100, 'wolf'));
     }
+    const wildHorses = this.animals.filter((a) => a.horse && !a.tamed).length;
+    if (wildHorses < CONFIG.logistics.horses && this.rng.chance(0.004)) {
+      const r = this.size * 0.9;
+      this.animals.push(new Animal(this, this.rng, this.rng.range(-r, r), this.rng.range(-r, r),
+        299, 'horse'));
+    }
+    if (tick % CONFIG.logistics.roadRecomputeTicks === 0) this.rebuildRoads();
 
     // Siege rams grind down the nearest enemy structure they're parked at.
     const W = CONFIG.war;

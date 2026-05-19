@@ -64,6 +64,7 @@ export class Entity {
     this.tool = null;
     this._toolMesh = null;
     this._shootCd = 0;
+    this.mount = null;          // a tamed horse following/carrying this agent
 
     this.action = 'IDLE';
     this.animState = 'idle';
@@ -617,9 +618,12 @@ export class Entity {
         } else {
           // Goods carried as the trader's own surplus (the village fed them
           // for the journey). Partner clan profits, both build goodwill.
-          const goods = Math.min(CONFIG.trade.caravanFood, this.energy - 45);
+          // A horse-drawn wagon hauls far more than a person on foot.
+          const cap = CONFIG.trade.caravanFood *
+            (this._mounted() ? CONFIG.logistics.wagonTradeBonus : 1);
+          const goods = Math.min(cap, this.energy - 45);
           if (goods > 0) {
-            this.energy -= goods;
+            this.energy -= Math.min(goods, CONFIG.trade.caravanFood); // wagon eases the load
             partner.store.food += goods * 0.5;
             if (home.store) home.store.food += goods * 0.3;       // profit home
             this.world.addBond(this.tribeId, partner.tribe, CONFIG.trade.bondPerTrade);
@@ -631,13 +635,31 @@ export class Entity {
         }
         break;
       }
+      case 'TAME': {
+        const h = choice.horse;
+        if (h && h.alive && !h.tamed) {
+          if (this.pos.distanceTo(h.pos) > CONFIG.logistics.tameRadius) {
+            want = this._moveToward(h.pos, 'run', dt);
+          } else {
+            want = 'interact';
+            // Calm, curious folk gentle a horse more reliably.
+            const odds = CONFIG.logistics.tameChance *
+              (1 + this.traits.curiosity - this.traits.aggression * 0.5);
+            if (this.rng.chance(odds)) {
+              h.tamed = true; h.ownerEntity = this; this.mount = h;
+              this.memory.remember('tamed', tick, h.pos, 0.9);
+            }
+          }
+        } else want = 'idle';
+        break;
+      }
       case 'PLAYER_MOVE': {
         // Direct human steering. dir is a world-space XZ vector.
         const dx = choice.dir?.x ?? 0;
         const dz = choice.dir?.z ?? 0;
         if (dx * dx + dz * dz > 1e-4) {
           this.heading = Math.atan2(dx, dz);
-          const sp = choice.run ? CONFIG.entity.runSpeed : CONFIG.entity.walkSpeed;
+          const sp = (choice.run ? CONFIG.entity.runSpeed : CONFIG.entity.walkSpeed) * this._speedMul();
           this.vel.x = Math.sin(this.heading) * sp;
           this.vel.z = Math.cos(this.heading) * sp;
           want = choice.run ? 'run' : 'walk';
@@ -675,7 +697,8 @@ export class Entity {
     while (diff < -Math.PI) diff += Math.PI * 2;
     this._turning = Math.abs(diff) > 0.9;
     this.heading += clamp(diff, -1, 1) * Math.min(1, CONFIG.entity.turnRate * dt);
-    const speed = gait === 'run' ? CONFIG.entity.runSpeed : CONFIG.entity.walkSpeed;
+    let speed = gait === 'run' ? CONFIG.entity.runSpeed : CONFIG.entity.walkSpeed;
+    speed *= this._speedMul();
     // Only commit to full speed once roughly facing the target.
     const align = Math.max(0, Math.cos(diff));
     this.vel.x = Math.sin(this.heading) * speed * align;
@@ -750,6 +773,19 @@ export class Entity {
     const sp = this._toolSpec();
     const r = sp?.ranged || sp?.throw;
     return r ? r.range : 0;
+  }
+
+  // Riding a tamed horse and travelling a paved road both speed you up.
+  _mounted() {
+    if (this.mount && (!this.mount.alive || this.mount.ownerEntity !== this)) this.mount = null;
+    return !!this.mount;
+  }
+
+  _speedMul() {
+    let m = 1;
+    if (this._mounted()) m *= CONFIG.logistics.mountSpeedMul;
+    if (this.world.onRoad?.(this.pos.x, this.pos.z)) m *= CONFIG.logistics.roadSpeedMul;
+    return m;
   }
 
   _physics(dt) {

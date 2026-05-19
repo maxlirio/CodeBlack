@@ -31,6 +31,14 @@ invention, and cultural diffusion.
   Settled, well-fed agents **farm** crops near home for surplus. None of this is scripted: it falls out of the
   utility scores, reinforcement, and the invention system recombining the
   `MOVE / GATHER / BUILD / SIGNAL / CRAFT / HUNT` primitives.
+- **War, trade & logistics** — blood feuds escalate to **war bands** that
+  march on rivals, raise **battering rams**, and **capture cities** (raze the
+  town centre → survivors defect, conquerors reap spoils). Peaceful clans
+  instead run **caravans** between granaries, building trade goodwill that
+  cancels rivalry; weary feuds settle into **truces**. **Roads** auto-pave
+  between centres/granaries and trade routes (faster travel), and wild
+  **horses** roam that agents can **tame** to ride (much faster) and to draw
+  trade **wagons** (haul far more). Hunting a boar calls a **hunting party**.
 - **Strict local perception** — limited radius + facing cone + structures
   occlude line of sight. No agent knows the global world state.
 - **Utility decisions** — each tick every candidate action is scored from
