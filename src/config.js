@@ -177,6 +177,19 @@ export const CONFIG = {
     warThreshold: 1.0         // at/above this a clan marches on the enemy
   },
 
+  trade: {
+    minSurplus: 18,           // food a village stockpile must hold to export
+    caravanFood: 12,          // food moved per successful caravan
+    bondPerTrade: 0.6,        // goodwill each trade builds between two clans
+    bondDecayPerTick: 0.00035, // goodwill fades if trade stops
+    bondMax: 4,               // cap; rivalry is cancelled well before this
+    rivalRelief: 0.14,        // rivalry removed per point of trade goodwill
+    range: 170,               // how far a caravan will travel to a partner
+    cooldownTicks: 500,       // per-agent trade cadence
+    truceChancePerTick: 0.0012, // weary feuding clans sue for peace
+    truceTicks: 5000          // how long a truce suppresses the grudge
+  },
+
   predator: {
     packs: 2,
     perPack: 3,

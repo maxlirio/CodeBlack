@@ -606,6 +606,31 @@ export class Entity {
           }
         } else want = 'idle';
         break;
+      case 'TRADE': {
+        // Run a caravan: carry village surplus to a friendly other clan's
+        // granary. Builds goodwill that cancels rivalry and deters war.
+        const home = choice.home, partner = choice.partner;
+        const live = (s) => s && this.world.structures.includes(s);
+        if (!live(partner) || !live(home)) { want = 'idle'; break; }
+        if (this.pos.distanceTo(partner.pos) > CONFIG.stockpile.storeRadius) {
+          want = this._moveToward(partner.pos, this._dangerBefore > 0 ? 'run' : 'walk', dt);
+        } else {
+          // Goods carried as the trader's own surplus (the village fed them
+          // for the journey). Partner clan profits, both build goodwill.
+          const goods = Math.min(CONFIG.trade.caravanFood, this.energy - 45);
+          if (goods > 0) {
+            this.energy -= goods;
+            partner.store.food += goods * 0.5;
+            if (home.store) home.store.food += goods * 0.3;       // profit home
+            this.world.addBond(this.tribeId, partner.tribe, CONFIG.trade.bondPerTrade);
+            this.energy = clamp(this.energy + 8, 0, CONFIG.entity.maxEnergy);
+            this.memory.remember('traded', tick, partner.pos, 0.8);
+            this._tradeCd = tick + CONFIG.trade.cooldownTicks;
+          }
+          want = 'interact';
+        }
+        break;
+      }
       case 'PLAYER_MOVE': {
         // Direct human steering. dir is a world-space XZ vector.
         const dx = choice.dir?.x ?? 0;

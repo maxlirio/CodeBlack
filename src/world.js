@@ -17,6 +17,8 @@ export class World {
     this.structures = [];
     this.projectiles = [];    // flying arrows / thrown spears
     this.feuds = new Map();   // "tribeA|tribeB" -> hatred magnitude
+    this.bonds = new Map();   // "tribeA|tribeB" -> trade goodwill
+    this.truces = new Map();  // "tribeA|tribeB" -> tick the truce expires
     // Back-compat alias: older code referred to edible nodes as "resources".
     this.resources = this.foods;
 
@@ -421,6 +423,26 @@ export class World {
     return best ? { st: best, dist: Math.sqrt(bd) } : null;
   }
 
+  // A peaceful caravan opportunity: this agent's own village granary has
+  // a surplus and there's a non-hostile other clan's granary in reach.
+  tradePartner(self) {
+    let home = null, hd = Infinity;
+    for (const st of this.structures) {
+      if (st.type !== 'storehouse' || st.tribe !== self.tribeId) continue;
+      const d = (st.pos.x - self.pos.x) ** 2 + (st.pos.z - self.pos.z) ** 2;
+      if (d < hd) { hd = d; home = st; }   // our village needs a trade hub
+    }
+    if (!home) return null;
+    let partner = null, pd = CONFIG.trade.range ** 2;
+    for (const st of this.structures) {
+      if (st.type !== 'storehouse' || st.tribe == null || st.tribe === self.tribeId) continue;
+      if (this.feud(self.tribeId, st.tribe) >= CONFIG.feud.warThreshold) continue;
+      const d = (st.pos.x - self.pos.x) ** 2 + (st.pos.z - self.pos.z) ** 2;
+      if (d < pd) { pd = d; partner = st; }
+    }
+    return partner ? { home, partner } : null;
+  }
+
   countHousesNear(x, z, radius) {
     let n = 0;
     for (const st of this.structures) {
@@ -524,7 +546,21 @@ export class World {
 
   feud(a, b) {
     if (a == null || b == null || a === b) return 0;
-    return this.feuds.get(this._feudKey(a, b)) ?? 0;
+    const k = this._feudKey(a, b);
+    if ((this.truces.get(k) ?? 0) > (this.tickNow ?? 0)) return 0; // truce holds
+    return this.feuds.get(k) ?? 0;
+  }
+
+  // Trade goodwill between two clans (cancels rivalry, deters war).
+  bond(a, b) {
+    if (a == null || b == null || a === b) return 0;
+    return this.bonds.get(this._feudKey(a, b)) ?? 0;
+  }
+
+  addBond(a, b, amt) {
+    if (a == null || b == null || a === b) return;
+    const k = this._feudKey(a, b);
+    this.bonds.set(k, Math.min(CONFIG.trade.bondMax, (this.bonds.get(k) ?? 0) + amt));
   }
 
   // The nearest structure of a clan this agent is at war with — the
@@ -547,6 +583,8 @@ export class World {
   registerKill(victim, killer, entities) {
     if (!killer || killer.tribeId === victim.tribeId) return;
     const k = this._feudKey(victim.tribeId, killer.tribeId);
+    this.truces.delete(k);                       // fresh blood shatters a truce
+    this.bonds.set(k, 0);                         // and any goodwill
     this.feuds.set(k, (this.feuds.get(k) ?? 0) + CONFIG.feud.perKill);
     for (const e of entities) {
       if (!e.alive || e === killer) continue;
@@ -562,12 +600,23 @@ export class World {
 
   update(tick, entities, dt = 1 / CONFIG.sim.tickRate) {
     const C = CONFIG.nature;
-    // Grudges cool slowly; lasting peace must be re-earned with time.
+    this.tickNow = tick;
+    // Grudges cool slowly; weary clans may also sue for a lasting truce.
     for (const [k, v] of this.feuds) {
       const nv = v - CONFIG.feud.decayPerTick;
-      if (nv <= 0.01) this.feuds.delete(k); else this.feuds.set(k, nv);
+      if (nv <= 0.01) { this.feuds.delete(k); continue; }
+      this.feuds.set(k, nv);
+      if (nv < CONFIG.feud.warThreshold && (this.truces.get(k) ?? 0) <= tick &&
+          this.rng.chance(CONFIG.trade.truceChancePerTick)) {
+        this.truces.set(k, tick + CONFIG.trade.truceTicks);
+        this.feuds.set(k, nv * 0.4);
+      }
     }
-    this.tickNow = tick;
+    // Trade goodwill fades without continued exchange.
+    for (const [k, v] of this.bonds) {
+      const nv = v - CONFIG.trade.bondDecayPerTick;
+      if (nv <= 0.01) this.bonds.delete(k); else this.bonds.set(k, nv);
+    }
 
     // Berry bushes regrow on their cooldown.
     for (const f of this.foods) {

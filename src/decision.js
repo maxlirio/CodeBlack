@@ -33,7 +33,10 @@ export function decide(self, p, tick, rng) {
 
     // Foreign tribes carry a baseline rivalry; an active blood feud between
     // the two clans turns that into open, lethal hostility.
-    const rivalry = !ally && e.tribeId !== self.tribeId ? CONFIG.tribe.rivalHostility : 0;
+    // Trade goodwill cancels the baseline rivalry between trading clans.
+    const relief = !ally ? self.world.bond(self.tribeId, e.tribeId) * CONFIG.trade.rivalRelief : 0;
+    const rivalry = !ally && e.tribeId !== self.tribeId
+      ? Math.max(0, CONFIG.tribe.rivalHostility - relief) : 0;
     const feud = ally ? 0
       : Math.min(0.9, self.world.feud(self.tribeId, e.tribeId) * CONFIG.feud.hostility);
     const hostile = rel.hostility + e.traits.aggression * 0.5 + rivalry + feud;
@@ -313,6 +316,16 @@ export function decide(self, p, tick, rng) {
       self.energy >= CONFIG.war.siegeMinEnergy && self._buildCooldown <= 0) {
     add('SIEGE', (1.0 + t.aggression + grudge * 0.5 + t.loyalty * 0.4) - t.caution * 0.3,
       { target: enemyCentre.st.pos, struct: enemyCentre.st });
+  }
+
+  // --- Trade & diplomacy: peaceful clans run caravans for prosperity ---
+  if (!war && danger < 0.25 && self.energy > 62 &&
+      (self._tradeCd ?? 0) <= tick && t.aggression < 0.62) {
+    const tp = self.world.tradePartner(self);
+    if (tp) {
+      add('TRADE', 0.8 + t.sociability * 1.2 + (1 - t.aggression) * 0.5 +
+        self.memory.valenceOf('traded'), { target: tp.partner.pos, home: tp.home, partner: tp.partner });
+    }
   }
 
   // --- Nature & technology: wood -> weapons -> hunting, and farming ---
