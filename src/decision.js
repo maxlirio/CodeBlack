@@ -360,7 +360,7 @@ export function decide(self, p, tick, rng) {
   const prey = p.animals.find((a) => !a.animal.predator && !a.animal.horse) ?? null;
   const wantWeapon = !self.weapon || self.weaponDur <= 1;
   const huntDrive = self.memory.valenceOf('hunted') + 0.2;
-  const minWood = CONFIG.tools.spear.wood;
+  const minWood = CONFIG.tools.ladder.wood;
 
   // Gather wood — mostly to make a tool, valued more if game is around.
   if (tree && wantWeapon && self.wood < CONFIG.tools.bow.wood) {
@@ -385,6 +385,15 @@ export function decide(self, p, tick, rng) {
     add('HUNT',
       (t.aggression * (0.7 + deficit) + t.riskTolerance * 0.5 + huntDrive) * armed - t.caution * 0.4,
       { target: prey.animal.pos, animal: prey.animal });
+  }
+  // Mining: quarry ore for stone — a curiosity/industry pursuit. Far
+  // faster with a pickaxe, so it nudges agents toward toolmaking.
+  const ore = p.ores[0];
+  if (ore && danger < 0.3) {
+    const pick = self._toolSpec()?.mine ? 1.8 : 0.5;
+    add('MINE', (0.45 + t.curiosity * 0.7 + (self._toolSpec()?.mine ? 0.6 : 0) +
+      self.memory.valenceOf('mined')) * pick - ore.dist * 0.012,
+      { target: ore.ore.pos, ore: ore.ore });
   }
   // Farming: a settled, surplus activity that yields more than foraging and
   // anchors agents to their village (food security -> bigger settlements).

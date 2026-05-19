@@ -75,14 +75,31 @@ export const CONFIG = {
   },
 
   // Craftable tools & weapons. melee = bonus damage in a strike; ranged
-  // tools fire a projectile; woodBonus speeds up chopping; throw lets a
-  // melee weapon also be hurled. era gates more advanced kit.
+  // tools fire a projectile; `mine` lets you quarry ore; `climb` lets you
+  // scale mountains. era gates more advanced kit.
   tools: {
-    club:  { wood: 2, dur: 8,  melee: 8,  woodBonus: 0, era: 1 },
-    spear: { wood: 3, dur: 7,  melee: 14, woodBonus: 0, era: 1, throw: { dmg: 15, speed: 34, range: 24 } },
-    axe:   { wood: 4, dur: 10, melee: 11, woodBonus: 2, era: 1 },
-    bow:   { wood: 5, dur: 9,  melee: 3,  woodBonus: 0, era: 2,
-             ranged: { dmg: 12, speed: 46, range: 32 } }
+    ladder:  { wood: 2, dur: 14, melee: 3,  era: 1, climb: true },
+    pickaxe: { wood: 3, dur: 10, melee: 10, era: 1, mine: true },
+    sword:   { wood: 4, dur: 12, melee: 22, era: 1 },
+    bow:     { wood: 5, dur: 9,  melee: 3,  era: 2,
+               ranged: { dmg: 12, speed: 46, range: 32 } }
+  },
+
+  mining: {
+    ore: 22,                  // boulders / mountain ore nodes
+    yield: 1,                 // stone per swing
+    nodeStone: 5,             // stone before a node is spent
+    regrowTicks: 2400,
+    reach: 2.4
+  },
+
+  landmarks: {
+    mountains: 4,             // rocky peaks (solid; need a ladder to scale)
+    lakes: 3,                 // water basins (skirted by reeds)
+    boulders: 26,             // scattered rocks, some ore-bearing
+    flowerPatches: 30,
+    deadTrees: 14,
+    mushroomRings: 10
   },
 
   projectile: {
@@ -276,6 +293,7 @@ export const ACTIONS = [
   'HUNT',
   'SHOOT',
   'FARM',
+  'MINE',
   'STOCKPILE',
   'RAID',
   'SIEGE',

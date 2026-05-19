@@ -120,23 +120,143 @@ export function makeTool(type) {
       new THREE.MeshStandardMaterial({ color: 0xd9d2c0 }));
     str.position.x = 0.18;
     g.add(limb, str);
-  } else if (type === 'axe') {
-    const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.0, 4), MAT.shaft);
-    const headM = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.26, 0.06), MAT.flint);
-    headM.position.set(0.12, 0.42, 0);
-    g.add(haft, headM);
-  } else if (type === 'club') {
-    const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.95, 5), MAT.shaft);
-    const knob = new THREE.Mesh(new THREE.IcosahedronGeometry(0.16, 0), MAT.shaft);
-    knob.position.y = 0.5;
-    g.add(haft, knob);
-  } else { // spear
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.2, 4), MAT.shaft);
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.34, 4), MAT.flint);
-    tip.position.y = 0.62;
-    g.add(shaft, tip);
+  } else if (type === 'sword') {
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 4), MAT.shaft);
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.06, 0.08), MAT.flint);
+    guard.position.y = 0.18;
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.95, 0.03), MAT.flint);
+    blade.position.y = 0.68;
+    g.add(grip, guard, blade);
+  } else if (type === 'ladder') {
+    const railL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.3, 0.05), MAT.shaft);
+    railL.position.x = -0.16;
+    const railR = railL.clone(); railR.position.x = 0.16;
+    g.add(railL, railR);
+    for (let i = 0; i < 5; i++) {
+      const rung = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.05, 0.05), MAT.shaft);
+      rung.position.y = -0.5 + i * 0.28;
+      g.add(rung);
+    }
+  } else { // pickaxe
+    const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 4), MAT.shaft);
+    const headM = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 0.08), MAT.flint);
+    headM.position.y = 0.5; headM.rotation.z = 0.18;
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.2, 4), MAT.flint);
+    spike.position.set(0, 0.5, 0.18); spike.rotation.x = Math.PI / 2;
+    g.add(haft, headM, spike);
   }
   g.rotation.x = Math.PI * 0.5;
+  return g;
+}
+
+// ---- Landmarks & scenery (low-poly, cheap, static) ----
+const LM = {
+  rock: new THREE.MeshStandardMaterial({ color: 0x7d7a72, roughness: 1, flatShading: true }),
+  rockDark: new THREE.MeshStandardMaterial({ color: 0x5b594f, roughness: 1, flatShading: true }),
+  snow: new THREE.MeshStandardMaterial({ color: 0xeef2f6, roughness: 0.6, flatShading: true }),
+  ore: new THREE.MeshStandardMaterial({ color: 0x9aa6b4, roughness: 0.55, metalness: 0.4, emissive: 0x10131a, flatShading: true }),
+  water: new THREE.MeshStandardMaterial({ color: 0x2f6f9e, roughness: 0.25, metalness: 0.2, transparent: true, opacity: 0.78 }),
+  reed: new THREE.MeshStandardMaterial({ color: 0x5f7d3a, roughness: 0.8 }),
+  deadwood: new THREE.MeshStandardMaterial({ color: 0x5a4d3b, roughness: 1, flatShading: true }),
+  shroom: new THREE.MeshStandardMaterial({ color: 0xc4503f, roughness: 0.6, emissive: 0x200, flatShading: true })
+};
+
+// A peak of stacked rocky cones with a snow cap; returns its blocking radius.
+export function makeMountain(rng, h = 16) {
+  const g = new THREE.Group();
+  const tiers = 4;
+  let r = 9 + rng.range(0, 4);
+  for (let i = 0; i < tiers; i++) {
+    const ch = h * (0.42 - i * 0.07);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(r, ch + h * 0.3, 6),
+      i === tiers - 1 ? LM.snow : (i % 2 ? LM.rockDark : LM.rock));
+    cone.position.y = i * (h * 0.22);
+    cone.rotation.y = rng.range(0, Math.PI);
+    cone.castShadow = true; cone.receiveShadow = true;
+    g.add(cone);
+    r *= 0.66;
+  }
+  g.userData.blockR = 9 + rng.range(0, 4);
+  return g;
+}
+
+export function makeOre(rng) {
+  const g = new THREE.Group();
+  const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9 + rng.range(0, 0.5), 0), LM.rock);
+  rock.rotation.set(rng(), rng(), rng());
+  rock.castShadow = true;
+  g.add(rock);
+  for (let i = 0; i < 4; i++) {
+    const v = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), LM.ore);
+    v.position.set(rng.range(-0.6, 0.6), rng.range(0.1, 0.8), rng.range(-0.6, 0.6));
+    g.add(v);
+  }
+  return g;
+}
+
+export function makeBoulder(rng) {
+  const m = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7 + rng.range(0, 0.9), 0), LM.rock);
+  m.rotation.set(rng() * 3, rng() * 3, rng() * 3);
+  m.castShadow = true;
+  return m;
+}
+
+export function makeLake(rng, r) {
+  const g = new THREE.Group();
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 18), LM.water);
+  disc.rotation.x = -Math.PI / 2;
+  g.add(disc);
+  const n = Math.floor(r * 1.4);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const reed = new THREE.Mesh(new THREE.ConeGeometry(0.08, 1.1 + rng.range(0, 0.6), 4), LM.reed);
+    reed.position.set(Math.sin(a) * (r - 0.4), 0.55, Math.cos(a) * (r - 0.4));
+    g.add(reed);
+  }
+  return g;
+}
+
+export function makeFlowerPatch(rng) {
+  const g = new THREE.Group();
+  const cols = [0xff5a8a, 0xffd23f, 0x9b6bff, 0xff8a3a];
+  for (let i = 0; i < 7; i++) {
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.4, 3), LM.reed);
+    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.1, 0),
+      new THREE.MeshStandardMaterial({ color: cols[i % 4], emissive: 0x110, flatShading: true }));
+    head.position.y = 0.26;
+    const f = new THREE.Group(); f.add(stem, head);
+    f.position.set(rng.range(-0.9, 0.9), 0.2, rng.range(-0.9, 0.9));
+    g.add(f);
+  }
+  return g;
+}
+
+export function makeDeadTree(rng) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 2.4 + rng.range(0, 1), 5), LM.deadwood);
+  trunk.position.y = 1.3; trunk.castShadow = true;
+  g.add(trunk);
+  for (let i = 0; i < 4; i++) {
+    const br = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 1.0, 4), LM.deadwood);
+    br.position.y = 1.6 + i * 0.3;
+    br.rotation.z = (i % 2 ? 1 : -1) * (0.7 + rng.range(0, 0.4));
+    g.add(br);
+  }
+  return g;
+}
+
+export function makeMushroomRing(rng) {
+  const g = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), LM.shroom);
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.22, 4),
+      new THREE.MeshStandardMaterial({ color: 0xe8e2d2, roughness: 0.8 }));
+    const s = new THREE.Group(); cap.position.y = 0.22; stem.position.y = 0.11;
+    s.add(stem, cap);
+    s.position.set(Math.sin(a) * 1.1, 0, Math.cos(a) * 1.1);
+    g.add(s);
+  }
   return g;
 }
 

@@ -113,9 +113,9 @@ export class Simulation {
   _bindInput() {
     const MOVE = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
     this._buildSel = 'house';
-    this._craftSel = 'spear';
+    this._craftSel = 'sword';
     const BUILD_KEYS = { 1: 'house', 2: 'wall', 3: 'storehouse', 4: 'tower', 5: 'center', 6: 'gate' };
-    const CRAFT_KEYS = { 7: 'spear', 8: 'bow', 9: 'axe', 0: 'club' };
+    const CRAFT_KEYS = { 7: 'sword', 8: 'bow', 9: 'pickaxe', 0: 'ladder' };
     const isSpace = (k) => k === ' ' || k === 'spacebar';
     addEventListener('keydown', (ev) => {
       const k = ev.key.toLowerCase();
@@ -387,8 +387,10 @@ export class Simulation {
     if (K.has('e')) {
       const tr = p.trees[0];
       const food = p.resources[0];
+      const ore = p.ores[0];
       const store = p.structures.find(({ st }) => st.type === 'storehouse');
       if (food && food.dist < CONFIG.entity.eatRadius) return { action: 'EAT', target: food.res.pos, food: food.res };
+      if (ore && ore.dist < 9) return { action: 'MINE', ore: ore.ore, target: ore.ore.pos };
       if (tr && tr.dist < 9) return { action: 'GATHER_WOOD', tree: tr.tree, target: tr.tree.pos };
       if (store) return { action: 'STOCKPILE', store: store.st, target: store.st.pos };
     }
@@ -630,6 +632,7 @@ export class Simulation {
     const s = this.player, ph = this.ui.ph;
     ph.energy.textContent = Math.round(s.energy);
     ph.wood.textContent = s.wood;
+    ph.stone.textContent = s.stone;
     ph.weapon.textContent = s.tool ? `${s.tool.type} ×${s.tool.dur}` : 'none';
     ph.build.textContent = this._buildSel;
     ph.craft.textContent = this._craftSel;
@@ -694,6 +697,7 @@ export class Simulation {
       ph: {
         energy: document.getElementById('ph-energy'),
         wood: document.getElementById('ph-wood'),
+        stone: document.getElementById('ph-stone'),
         weapon: document.getElementById('ph-weapon'),
         clan: document.getElementById('ph-clan'),
         era: document.getElementById('ph-era'),

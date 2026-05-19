@@ -59,9 +59,10 @@ export class Entity {
     this.tribeEra = 1;
     this._lastReproTick = -99999;
 
-    // Tools & inventory — the basis of the wood -> tools -> hunting tech.
-    // tool = { type:'spear'|'bow'|'axe'|'club', dur:n } or null (unarmed).
+    // Tools & inventory. tool = { type:'sword'|'bow'|'pickaxe'|'ladder',
+    // dur:n } or null (unarmed). Wood crafts tools; stone is quarried ore.
     this.wood = 0;
+    this.stone = 0;
     this.tool = null;
     this._toolMesh = null;
     this._shootCd = 0;
@@ -105,7 +106,7 @@ export class Entity {
     const W = this.learn.weights;
     const map = {
       HUNT: 'Hunter', GATHER_WOOD: 'Woodcutter', CRAFT: 'Toolmaker',
-      FARM: 'Farmer', BUILD: 'Builder', FORTIFY: 'Builder',
+      FARM: 'Farmer', BUILD: 'Builder', FORTIFY: 'Builder', MINE: 'Miner',
       DEFEND: 'Warrior', ATTACK: 'Warrior', RAID: 'Raider',
       STOCKPILE: 'Keeper', SEEK_RESOURCE: 'Forager', EAT: 'Forager',
       APPROACH: 'Diplomat', GROUP: 'Diplomat', EXPLORE: 'Scout'
@@ -447,6 +448,9 @@ export class Entity {
               st.store.food += give;
             }
             if (this.wood > 0) { st.store.wood += this.wood; this.wood = 0; }
+            if (this.stone > 0) {
+              st.store.stone = (st.store.stone ?? 0) + this.stone; this.stone = 0;
+            }
             this.memory.remember('stocked', tick, st.pos, 0.6);
             want = 'interact';
           }
@@ -522,7 +526,7 @@ export class Entity {
       }
       case 'CRAFT': {
         const type = choice.craftType ?? this._chooseToolType();
-        const tc = CONFIG.tools[type] ?? CONFIG.tools.spear;
+        const tc = CONFIG.tools[type] ?? CONFIG.tools.sword;
         if (this.wood >= tc.wood && this._buildCooldown <= 0) {
           this._workTimer = (this._workTimer ?? 0) + dt;
           want = 'interact';
@@ -638,6 +642,24 @@ export class Entity {
           }
         } else want = 'idle';
         break;
+      case 'MINE': {
+        const o = choice.ore;
+        if (o && o.stone > 0) {
+          if (this.pos.distanceTo(o.pos) > CONFIG.mining.reach) {
+            want = this._moveToward(o.pos, 'walk', dt);
+          } else {
+            this._workTimer = (this._workTimer ?? 0) + dt;
+            want = 'build'; // pickaxe swing uses the work cycle
+            const rate = (this._toolSpec()?.mine ? 0.7 : 1.6); // bare-handed is slow
+            if (this._workTimer > rate) {
+              this.stone += this.world.mineOre(o, tick);
+              this._workTimer = 0;
+              this.memory.remember('mined', tick, o.pos, 0.4);
+            }
+          }
+        } else want = 'idle';
+        break;
+      }
       case 'TRADE': {
         // Run a caravan: carry village surplus to a friendly other clan's
         // granary. Builds goodwill that cancels rivalry and deters war.
@@ -745,20 +767,18 @@ export class Entity {
     return { x: dx / l, z: dz / l };
   }
 
-  // Pick which tool to make: bows once the tribe reaches Era 2 and the
-  // agent is hunt-minded; axes for dedicated woodcutters; spears as the
-  // reliable default; clubs only as a cheap fallback when wood is short.
+  // Pick which tool to make: a ladder when wood is short (cheap, lets you
+  // reach mountain ore); a pickaxe for would-be miners; a bow for advanced
+  // hunters; otherwise a sword — the all-round workhorse weapon.
   _chooseToolType() {
     const era = this.tribeEra ?? 1;
     const W = this.learn.weights;
-    if (this.wood < CONFIG.tools.spear.wood) return 'club';
-    // Bows are a costly specialisation, not the default — only dedicated
-    // hunters in an advanced tribe save the extra wood for one. The cheap,
-    // effective spear stays the workhorse so hunting throughput holds up.
+    if (this.wood < CONFIG.tools.pickaxe.wood) return 'ladder';
+    if ((W.MINE ?? 1) > 1.15 && this.wood >= CONFIG.tools.pickaxe.wood) return 'pickaxe';
     if (era >= 2 && this.wood >= CONFIG.tools.bow.wood &&
-        W.HUNT > 1.35 && this.traits.aggression > 0.55) return 'bow';
-    if (W.GATHER_WOOD > 1.2 && this.wood >= CONFIG.tools.axe.wood) return 'axe';
-    return 'spear';
+        W.HUNT > 1.3 && this.traits.aggression > 0.5) return 'bow';
+    if (this.wood >= CONFIG.tools.sword.wood) return 'sword';
+    return 'pickaxe';
   }
 
   _equipTool(type) {
@@ -784,26 +804,23 @@ export class Entity {
     return CONFIG.entity.attackDamage + (sp ? sp.melee + era : 0);
   }
 
-  // Fire a ranged tool (bow) or hurl a spear toward a point/direction.
-  // power 0..1 (player charge); a fuller draw flies faster and hits harder.
+  // Loose an arrow from a bow toward a point/direction. power 0..1
+  // (player charge); a fuller draw flies faster and hits harder.
   _shoot(aimDir, owner, power = 0.7) {
     const sp = this._toolSpec();
-    const r = sp?.ranged || sp?.throw;
+    const r = sp?.ranged;
     if (!r) return false;
     const k = 0.6 + 0.6 * power;
     const origin = new THREE.Vector3(this.pos.x, this.pos.y + 1.7, this.pos.z);
     this.world.spawnProjectile(origin, aimDir,
-      (r.dmg + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra) * k, this,
-      this.tool.type === 'bow' ? 'arrow' : 'spear', r.speed * k);
+      (r.dmg + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra) * k, this, 'arrow', r.speed * k);
     this._useTool();
     this._shootCd = 14;
     return true;
   }
 
   _rangedReach() {
-    const sp = this._toolSpec();
-    const r = sp?.ranged || sp?.throw;
-    return r ? r.range : 0;
+    return this._toolSpec()?.ranged?.range ?? 0;
   }
 
   // Time spent within a building. Shelters (house/store/centre) hide the
@@ -903,8 +920,9 @@ export class Entity {
     const lim = this.world.size * 0.97;
     this.pos.x = clamp(this.pos.x, -lim, lim);
     this.pos.z = clamp(this.pos.z, -lim, lim);
-    // Solid walls block movement — fortifications actually channel paths.
-    const fixed = this.world.resolveCollision(this.pos.x, this.pos.z, CONFIG.entity.radius);
+    // Walls always block; mountains block unless you carry a ladder.
+    const fixed = this.world.resolveCollision(this.pos.x, this.pos.z, CONFIG.entity.radius,
+      !!this._toolSpec()?.climb);
     this.pos.x = fixed.x;
     this.pos.z = fixed.z;
     const gy = this.world.heightAt(this.pos.x, this.pos.z);
@@ -936,8 +954,8 @@ export class Entity {
     let good = dE > 0.3 || a === 'EAT' || (a === 'FLEE' && this._dangerBefore > 0) || homeSafe ||
       (a === 'BUILD' && this._dangerBefore === 0) || a === 'CRAFT' || huntWin ||
       (a === 'GATHER_WOOD' && this.wood > 0) || a === 'FARM' || a === 'STOCKPILE' ||
-      (a === 'DEFEND' && this._dangerBefore > 0);
-    let bad = (!['IDLE', 'RETURN_HOME', 'CRAFT', 'FARM', 'STOCKPILE', 'BUILD', 'FORTIFY'].includes(a) &&
+      (a === 'MINE' && this.stone > 0) || (a === 'DEFEND' && this._dangerBefore > 0);
+    let bad = (!['IDLE', 'RETURN_HOME', 'CRAFT', 'FARM', 'MINE', 'STOCKPILE', 'BUILD', 'FORTIFY'].includes(a) &&
       dE < -1.2) || (a === 'ATTACK' && this.energy < 25) ||
       (a === 'HUNT' && !this.weapon && this.memory.valenceOf('hunted') < 0);
 

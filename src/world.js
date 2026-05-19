@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { makeTree, makeBush, makeCrop, setCropGrowth, Animal } from './nature.js';
+import {
+  makeTree, makeBush, makeCrop, setCropGrowth, Animal,
+  makeMountain, makeOre, makeBoulder, makeLake, makeFlowerPatch, makeDeadTree, makeMushroomRing
+} from './nature.js';
 
 // Persistent physical world: procedurally generated terrain, living
 // nature (forests, berry bushes, farmable crops, roaming animal herds)
@@ -14,6 +17,8 @@ export class World {
     this.trees = [];        // wood sources
     this.crops = [];        // growing (not yet edible) plots
     this.animals = [];
+    this.ores = [];         // mineable ore nodes (need a pickaxe)
+    this.mountains = [];    // {pos, r} solid peaks — need a ladder to scale
     this.structures = [];
     this.projectiles = [];    // flying arrows / thrown spears
     this.feuds = new Map();   // "tribeA|tribeB" -> hatred magnitude
@@ -111,9 +116,83 @@ export class World {
       this.animals.push(new Animal(this, this.rng,
         this.rng.range(-r, r), this.rng.range(-r, r), 200 + i, 'horse'));
     }
+    this._seedLandmarks(r);
     this.roads = [];
     this.roadGroup = new THREE.Group();
     this.scene.add(this.roadGroup);
+  }
+
+  _seedLandmarks(r) {
+    const L = CONFIG.landmarks;
+    // Mountains — rocky peaks that block travel (climb with a ladder),
+    // ringed by ore the miners quarry for stone.
+    for (let i = 0; i < L.mountains; i++) {
+      const x = this.rng.range(-r, r), z = this.rng.range(-r, r);
+      const y = this.heightAt(x, z);
+      const m = makeMountain(this.rng);
+      m.position.set(x, y, z);
+      this.scene.add(m);
+      const mt = { pos: new THREE.Vector3(x, y, z), r: m.userData.blockR };
+      this.mountains.push(mt);
+      const ringN = 5 + this.rng.int(0, 3);
+      for (let k = 0; k < ringN; k++) {
+        const a = (k / ringN) * Math.PI * 2 + this.rng();
+        this._addOre(x + Math.sin(a) * (mt.r + 1.5), z + Math.cos(a) * (mt.r + 1.5));
+      }
+    }
+    // Lakes — flat water with reeds (a scenic skirt).
+    for (let i = 0; i < L.lakes; i++) {
+      const x = this.rng.range(-r, r), z = this.rng.range(-r, r);
+      const rad = 7 + this.rng.range(0, 7);
+      const lk = makeLake(this.rng, rad);
+      lk.position.set(x, this.heightAt(x, z) + 0.12, z);
+      this.scene.add(lk);
+    }
+    // Boulders — some bear ore, the rest are scenery.
+    for (let i = 0; i < L.boulders; i++) {
+      const x = this.rng.range(-r, r), z = this.rng.range(-r, r);
+      if (this.rng.chance(0.45)) { this._addOre(x, z); continue; }
+      const b = makeBoulder(this.rng);
+      b.position.set(x, this.heightAt(x, z) + 0.5, z);
+      this.scene.add(b);
+    }
+    const scatter = (n, make, yOff = 0) => {
+      for (let i = 0; i < n; i++) {
+        const x = this.rng.range(-r, r), z = this.rng.range(-r, r);
+        const o = make(this.rng);
+        o.position.set(x, this.heightAt(x, z) + yOff, z);
+        this.scene.add(o);
+      }
+    };
+    scatter(L.flowerPatches, makeFlowerPatch);
+    scatter(L.deadTrees, makeDeadTree);
+    scatter(L.mushroomRings, makeMushroomRing);
+  }
+
+  _addOre(x, z) {
+    const y = this.heightAt(x, z);
+    const mesh = makeOre(this.rng);
+    mesh.position.set(x, y + 0.5, z);
+    this.scene.add(mesh);
+    this.ores.push({ pos: new THREE.Vector3(x, y + 0.6, z), mesh,
+      stone: CONFIG.mining.nodeStone, regrowAt: 0 });
+  }
+
+  mineOre(node, tick) {
+    if (node.stone <= 0) return 0;
+    node.stone -= 1;
+    if (node.stone <= 0) { node.regrowAt = tick + CONFIG.mining.regrowTicks; node.mesh.visible = false; }
+    return CONFIG.mining.yield;
+  }
+
+  nearestOre(x, z) {
+    let best = null, bd = Infinity;
+    for (const o of this.ores) {
+      if (o.stone <= 0) continue;
+      const d = (o.pos.x - x) ** 2 + (o.pos.z - z) ** 2;
+      if (d < bd) { bd = d; best = o; }
+    }
+    return best ? { ore: best, dist: Math.sqrt(bd) } : null;
   }
 
   // Pave straight roads between a settlement's centre and its granaries,
@@ -472,7 +551,7 @@ export class World {
       owner: builder ? builder.id : null,
       tribe: builder ? builder.tribeId : null,
       _fam: builder ? builder.familyId : null,
-      store: type === 'storehouse' ? { food: 0, wood: 0 } : null
+      store: type === 'storehouse' ? { food: 0, wood: 0, stone: 0 } : null
     };
     this.structures.push(s);
     return s;
@@ -600,8 +679,9 @@ export class World {
     return n;
   }
 
-  // Push a moving point out of solid walls (simple circle vs. AABB-ish).
-  resolveCollision(x, z, r) {
+  // Push a moving point out of solid walls and mountains. A climber
+  // (ladder in hand) ignores mountains — they can scale them.
+  resolveCollision(x, z, r, canClimb = false) {
     for (const st of this.structures) {
       if (!st.solid) continue;
       const dx = x - st.pos.x;
@@ -615,7 +695,27 @@ export class World {
         z += dz * push;
       }
     }
+    if (!canClimb) {
+      for (const mt of this.mountains) {
+        const dx = x - mt.pos.x;
+        const dz = z - mt.pos.z;
+        const d2 = dx * dx + dz * dz;
+        const min = mt.r + r;
+        if (d2 < min * min && d2 > 1e-6) {
+          const d = Math.sqrt(d2);
+          const push = (min - d) / d;
+          x += dx * push;
+          z += dz * push;
+        }
+      }
+    }
     return { x, z };
+  }
+
+  update_oresRegrow(tick) {
+    for (const o of this.ores) {
+      if (o.stone <= 0 && tick >= o.regrowAt) { o.stone = CONFIG.mining.nodeStone; o.mesh.visible = true; }
+    }
   }
 
   // Structures block line of sight — used by perception.
@@ -926,6 +1026,7 @@ export class World {
         for (const fol of t.mesh.userData.foliage) fol.visible = true;
       }
     }
+    this.update_oresRegrow(tick);
     // Structures slowly mend (settlement upkeep) when not under siege.
     for (const st of this.structures) {
       if (st.hp < st.maxHp && tick - (st._lastHit ?? -9999) > 200) {

@@ -73,6 +73,7 @@ const OUTFIT = {
   Farmer:     { tunic: 0xc7b27a, hat: 'straw' },
   Builder:    { tunic: 0x7a5a36, hat: 'cap' },
   Woodcutter: { tunic: 0x6e4b2c, hat: 'cap' },
+  Miner:      { tunic: 0x55606b, hat: 'cap' },
   Toolmaker:  { tunic: 0x8a8170, hat: 'cap' },
   Keeper:     { tunic: 0x4a6a8a, hat: null },
   Raider:     { tunic: 0x7a3a3a, hat: 'helmet' },

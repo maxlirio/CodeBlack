@@ -16,7 +16,7 @@ export function perceive(self, entities, world, tick) {
   const fx = Math.sin(self.heading);
   const fz = Math.cos(self.heading);
 
-  const out = { entities: [], resources: [], structures: [], signals: [], trees: [], animals: [] };
+  const out = { entities: [], resources: [], structures: [], signals: [], trees: [], animals: [], ores: [] };
 
   for (const e of entities) {
     if (e === self || !e.alive || e.inside) continue; // sheltered = unseen
@@ -68,10 +68,17 @@ export function perceive(self, entities, world, tick) {
     out.animals.push({ animal: a, dist: Math.sqrt(d2) });
   }
 
+  for (const o of world.ores) {
+    if (o.stone <= 0) continue;
+    const d2 = (o.pos.x - self.pos.x) ** 2 + (o.pos.z - self.pos.z) ** 2;
+    if (d2 < R2) out.ores.push({ ore: o, dist: Math.sqrt(d2) });
+  }
+
   out.entities.sort((a, b) => a.dist - b.dist);
   out.resources.sort((a, b) => a.dist - b.dist);
   out.structures.sort((a, b) => a.dist - b.dist);
   out.trees.sort((a, b) => a.dist - b.dist);
   out.animals.sort((a, b) => a.dist - b.dist);
+  out.ores.sort((a, b) => a.dist - b.dist);
   return out;
 }
