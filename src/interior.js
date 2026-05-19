@@ -7,14 +7,17 @@ import { clamp } from './rng.js';
 // walks into a building. Each structure type has its own layout and
 // clickable props: storehouse shelves (store / retrieve), a watchtower
 // you climb and fire a bow from, a house where kin gather to talk.
+// Warm, well-lit interior palette (the old one rendered near-black). A
+// little emissive on every surface guarantees the room reads even in
+// shadow, so it never looks pitch black.
 const M = {
-  floor: new THREE.MeshStandardMaterial({ color: 0x4a3b2a, roughness: 0.95 }),
-  wall: new THREE.MeshStandardMaterial({ color: 0x6a5740, roughness: 0.9, side: THREE.DoubleSide }),
-  wood: new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.85 }),
-  shelf: new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.8, emissive: 0x140d04 }),
-  crate: new THREE.MeshStandardMaterial({ color: 0xb98a4a, roughness: 0.85 }),
-  fire: new THREE.MeshStandardMaterial({ color: 0xff7a2f, emissive: 0xff5a1f, emissiveIntensity: 1.4 }),
-  stone: new THREE.MeshStandardMaterial({ color: 0x8d8576, roughness: 0.95, side: THREE.DoubleSide })
+  floor: new THREE.MeshStandardMaterial({ color: 0x8a6f4c, roughness: 0.95, emissive: 0x2a2014 }),
+  wall: new THREE.MeshStandardMaterial({ color: 0xb29368, roughness: 0.9, emissive: 0x3a2e1c, side: THREE.DoubleSide }),
+  wood: new THREE.MeshStandardMaterial({ color: 0xa9824c, roughness: 0.85, emissive: 0x2a1e10 }),
+  shelf: new THREE.MeshStandardMaterial({ color: 0xc09a55, roughness: 0.8, emissive: 0x3a2a10 }),
+  crate: new THREE.MeshStandardMaterial({ color: 0xd6a85e, roughness: 0.85, emissive: 0x2e2008 }),
+  fire: new THREE.MeshStandardMaterial({ color: 0xff8a3a, emissive: 0xff6a24, emissiveIntensity: 1.6 }),
+  stone: new THREE.MeshStandardMaterial({ color: 0xb8b09c, roughness: 0.95, emissive: 0x3a382f, side: THREE.DoubleSide })
 };
 
 export class Interior {
@@ -25,12 +28,13 @@ export class Interior {
     this.type = struct.type;
     this.props = [];                       // clickable meshes
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0a0c12);
-    this.scene.fog = new THREE.FogExp2(0x0a0c12, 0.02);
+    this.scene.background = new THREE.Color(0x2a2418);
 
-    this.scene.add(new THREE.HemisphereLight(0xbfd0ff, 0x20160e, 0.5));
-    const lamp = new THREE.PointLight(0xffd9a0, 1.2, 40);
-    lamp.position.set(0, 5, 0);
+    // Bright, even lighting so interiors are clearly visible.
+    this.scene.add(new THREE.AmbientLight(0xfff2d8, 0.85));
+    this.scene.add(new THREE.HemisphereLight(0xffe9c8, 0x6b5836, 0.9));
+    const lamp = new THREE.PointLight(0xffe2b0, 2.6, 70);
+    lamp.position.set(0, 4.6, 0);
     this.scene.add(lamp);
     this.lamp = lamp;
 
@@ -41,11 +45,10 @@ export class Interior {
 
     ({ house: () => this._house(),
        storehouse: () => this._storehouse(),
-       tower: () => this._tower(),
        center: () => this._center()
     }[this.type] ?? (() => this._center()))();
 
-    if (!this.openSky) this._shell();
+    this._shell();
   }
 
   _shell() {
@@ -132,35 +135,6 @@ export class Interior {
     this._addProp(crates, { kind: 'wood' }, 'Wood pile — click to deposit/withdraw');
   }
 
-  _tower() {
-    // We're up on the parapet: open sky, low crenellated wall, shoot out.
-    this.openSky = true;
-    this.scene.background = new THREE.Color(0x6f93c8);
-    this.scene.fog = new THREE.FogExp2(0x6f93c8, 0.008);
-    this.scene.add(new THREE.HemisphereLight(0xcfe2ff, 0x4a4030, 0.95));
-    const sun = new THREE.DirectionalLight(0xffe7c4, 1.0);
-    sun.position.set(20, 30, 10); this.scene.add(sun);
-    this.bound = 2.2; this.eye = 2.0;
-
-    const deck = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 0.5, 8), M.stone);
-    deck.position.y = -0.25; this.scene.add(deck);
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      const merl = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.1, 0.5), M.stone);
-      merl.position.set(Math.sin(a) * 3, 0.55, Math.cos(a) * 3);
-      merl.rotation.y = -a;
-      this.scene.add(merl);
-    }
-    // Distant low-poly hills so the height reads.
-    for (let i = 0; i < 14; i++) {
-      const h = new THREE.Mesh(new THREE.ConeGeometry(6 + i % 4 * 2, 5, 5),
-        new THREE.MeshStandardMaterial({ color: 0x3f5640, roughness: 1 }));
-      const a = (i / 14) * Math.PI * 2;
-      h.position.set(Math.sin(a) * 60, -6, Math.cos(a) * 60);
-      this.scene.add(h);
-    }
-  }
-
   _center() {
     this.lamp.color.setHex(0xffe0b0);
     const table = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 0.3, 8), M.wood);
@@ -221,19 +195,6 @@ export class Interior {
       return 'You raise the banner — your clan will rally to you.';
     }
     return null;
-  }
-
-  // Fire a bow out over the battlements (tower only).
-  shootOut(dir) {
-    if (this.type !== 'tower') return 'You can only shoot from the tower.';
-    if (!this.player.tool || !(CONFIG.tools[this.player.tool.type]?.ranged)) {
-      return 'You need a bow to shoot from here.';
-    }
-    const top = new THREE.Vector3(this.struct.pos.x, this.struct.pos.y + 6, this.struct.pos.z);
-    const r = CONFIG.tools[this.player.tool.type].ranged;
-    this.world.spawnProjectile(top, dir, r.dmg * 1.3, this.player, 'arrow', r.speed * 1.2);
-    if (--this.player.tool.dur <= 0) this.player.tool = null;
-    return 'You loose an arrow over the wall.';
   }
 
   update(dt) {

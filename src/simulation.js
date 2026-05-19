@@ -25,6 +25,9 @@ export class Simulation {
     this.player = null;          // entity the human is controlling
     this.keys = new Set();
     this._attackQueued = false;  // a click / Space press waiting to resolve
+    this._placing = false;       // build-placement ghost active
+    this._ghost = null;
+    this._buildOrder = null;
     this._initRenderer();
     this._initScene();
     this._bindUI();
@@ -61,26 +64,20 @@ export class Simulation {
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       if (this.interior) this._interiorClick(e);
+      else if (this._placing) this._confirmPlacing();   // click = place here
       else if (this.mode === 'play') this._attackQueued = true; // click = attack
       else this._pick(e);
     });
   }
 
-  // Inside a building: a click either works a prop (shelves, kin, banner)
-  // or, on the tower, looses an arrow out over the wall.
+  // Inside a building: a click works the prop under the crosshair
+  // (shelves, kin, banner).
   _interiorClick() {
     const it = this.interior;
-    let msg;
-    if (it.type === 'tower') {
-      const fwd = new THREE.Vector3();
-      this.camera.getWorldDirection(fwd);
-      msg = it.shootOut({ x: fwd.x, z: fwd.z });
-    } else {
-      this._cgRay ??= new THREE.Raycaster();
-      this._cgRay.setFromCamera({ x: 0, y: 0 }, this.camera); // crosshair ray
-      const hit = this._cgRay.intersectObjects(it.props, true)[0];
-      if (hit) msg = it.interact(hit.object);
-    }
+    this._cgRay ??= new THREE.Raycaster();
+    this._cgRay.setFromCamera({ x: 0, y: 0 }, this.camera); // crosshair ray
+    const hit = this._cgRay.intersectObjects(it.props, true)[0];
+    const msg = hit ? it.interact(hit.object) : null;
     if (msg) this._flash(msg);
   }
 
@@ -108,14 +105,20 @@ export class Simulation {
       this.keys.add(k);
       if (this.mode === 'follow' && MOVE.has(k)) this._setMode('free');
       if (this.mode === 'play') {
-        if (k === 'escape') { this.interior ? this._exitInterior() : this._exitPlay(); }
-        else if (k === 'r' && fresh) { this.interior ? this._exitInterior() : this._enterInterior(); }
-        else if (this.interior) { /* movement only inside */ }
+        const inside = this.interior || this.towerPerch;
+        if (k === 'escape') {
+          if (this._placing) this._cancelPlacing();
+          else if (inside) this._exitInterior();
+          else this._exitPlay();
+        } else if (k === 'r' && fresh) {
+          inside ? this._exitInterior() : this._enterInterior();
+        } else if (inside) { /* look/move only */ }
         else {
-          if (BUILD_KEYS[k]) this._buildSel = BUILD_KEYS[k];
+          if (BUILD_KEYS[k]) { this._buildSel = BUILD_KEYS[k]; if (this._placing) this._makeGhost(); }
           if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
+          if (k === 'b' && fresh) this._togglePlacing();
           // Space = attack (same as a mouse click); auto ranged or melee.
-          if (isSpace(k) && fresh) this._attackQueued = true;
+          if (isSpace(k) && fresh && !this._placing) this._attackQueued = true;
         }
         ev.preventDefault();
       }
@@ -161,25 +164,36 @@ export class Simulation {
   }
 
   _exitPlay() {
-    if (this.interior) this._exitInterior();
+    if (this.interior || this.towerPerch) this._exitInterior();
+    this.towerPerch = null;
+    if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
+    this._placing = false;
+    this._buildOrder = null;
     if (this.player) this.player.controller = null;
     this.player = null;
     this._attackQueued = false;
     this._setMode(this.selected && this.selected.alive ? 'follow' : 'free');
   }
 
-  // Step inside the nearest friendly building you're standing at.
+  // Enter the nearest building of YOUR OWN tribe you're standing at.
+  // A watchtower is a vantage point in the world, not a separate room.
   _enterInterior() {
     const pl = this.player;
     if (!pl) return;
     let near = null, nd = 6;
     for (const st of this.world.structures) {
-      if (st.type === 'wall') continue;
+      if (st.type === 'wall' || st.type === 'gate' || st.type === 'ram') continue;
+      if (st.tribe !== pl.tribeId && st.owner !== pl.id) continue; // own tribe only
       const d = Math.hypot(st.pos.x - pl.pos.x, st.pos.z - pl.pos.z);
-      if (d < nd && (st.tribe == null || st.tribe === pl.tribeId || st.owner === pl.id ||
-          pl.kin.has(st.owner))) { nd = d; near = st; }
+      if (d < nd) { nd = d; near = st; }
     }
-    if (!near) { this._flash('No building of yours within reach to enter.'); return; }
+    if (!near) { this._flash('Stand next to one of your own buildings, then press R.'); return; }
+    if (near.type === 'tower') {
+      this.towerPerch = near;     // climb up — stay in the world, just high
+      this._syncModeUI();
+      this._flash('Climbed the watchtower. Look around · click/Space to shoot · R / Esc to come down.');
+      return;
+    }
     this.interior = new Interior(near, pl, this.world);
     this._intPos = new THREE.Vector3(0, 0, this.interior.bound * 0.6);
     this._syncModeUI();
@@ -187,17 +201,88 @@ export class Simulation {
   }
 
   _exitInterior() {
+    if (this.towerPerch) { this.towerPerch = null; this._syncModeUI(); return; }
     if (!this.interior) return;
     this.interior.dispose();
     this.interior = null;
     this._syncModeUI();
   }
 
+  // ---- Click-to-place building ----
+  static FOOTPRINT = {
+    house: [2.6, 2.6], wall: [4.2, 1.0], gate: [3.4, 1.4], storehouse: [4, 4],
+    tower: [3, 3], center: [6, 6]
+  };
+
+  _togglePlacing() {
+    if (this._placing) return this._cancelPlacing();
+    this._placing = true;
+    this._buildOrder = null;
+    this._makeGhost();
+    this._flash(`Placing ${this._buildSel} — aim with the crosshair, click to set it (1-6 changes type, Esc cancels).`);
+  }
+
+  _cancelPlacing() {
+    this._placing = false;
+    if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
+    this._flash('Placement cancelled.');
+  }
+
+  _makeGhost() {
+    if (this._ghost) this.scene.remove(this._ghost);
+    const [w, d] = Simulation.FOOTPRINT[this._buildSel] ?? [2.6, 2.6];
+    const box = new THREE.BoxGeometry(w, 3, d);
+    this._ghost = new THREE.LineSegments(new THREE.EdgesGeometry(box),
+      new THREE.LineBasicMaterial({ color: 0xffffff }));
+    this._ghost.renderOrder = 999;
+    this.scene.add(this._ghost);
+  }
+
+  _groundAhead() {
+    this._cgRay ??= new THREE.Raycaster();
+    this._cgRay.setFromCamera({ x: 0, y: 0 }, this.camera);
+    const hit = this._cgRay.intersectObject(this.world.terrain, false)[0];
+    if (hit) return hit.point;
+    // Fallback: project forward from the player onto the terrain height.
+    const f = new THREE.Vector3();
+    this.camera.getWorldDirection(f); f.y = 0; f.normalize();
+    const px = this.player.pos.x + f.x * 6, pz = this.player.pos.z + f.z * 6;
+    return new THREE.Vector3(px, this.world.heightAt(px, pz), pz);
+  }
+
+  _updateGhost() {
+    if (!this._ghost || !this.player) return;
+    const g = this._groundAhead();
+    this._ghost.position.set(g.x, g.y + 1.5, g.z);
+    const blocked = this.world.countStructures(g.x, g.z, 'wall', 2) +
+      this.world.countStructures(g.x, g.z, 'house', 2.5) > 0;
+    this._ghost.material.color.setHex(blocked ? 0xff5a5a : 0xffffff);
+  }
+
+  _confirmPlacing() {
+    if (!this.player) return;
+    const g = this._groundAhead();
+    this._buildOrder = { type: this._buildSel, x: g.x, z: g.z };
+    this._placing = false;
+    if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
+    this._flash(`Walking over to build a ${this._buildSel}.`);
+  }
+
   // Translate live keyboard state into the same choice objects the utility
   // AI produces, so the agent executes player intent through identical code.
   _playerChoice(self, p) {
-    // While inside a building the body waits at the door.
-    if (this.interior) return { action: 'IDLE' };
+    // Inside a building, or perched up the tower, the body stays put.
+    if (this.interior || this.towerPerch) {
+      // From the tower you can still shoot down at the field below.
+      if (this.towerPerch && this._attackQueued && (self._rangedReach?.() ?? 0) > 0) {
+        this._attackQueued = false;
+        const f = new THREE.Vector3();
+        this.camera.getWorldDirection(f);
+        return { action: 'SHOOT', aim: { x: f.x, z: f.z }, power: 1 };
+      }
+      this._attackQueued = false;
+      return { action: 'IDLE' };
+    }
     const fwd = new THREE.Vector3();
     this.camera.getWorldDirection(fwd);
     fwd.y = 0; fwd.normalize();
@@ -210,6 +295,19 @@ export class Simulation {
     if (K.has('s') || K.has('arrowdown')) dir.sub(fwd);
     if (K.has('d') || K.has('arrowright')) dir.add(right);
     if (K.has('a') || K.has('arrowleft')) dir.sub(right);
+
+    // A confirmed build order: walk to the chosen spot and raise it there.
+    if (this._buildOrder) {
+      const o = this._buildOrder;
+      const done = this.world.countStructures(o.x, o.z, o.type, 3.5) > 0;
+      if (done) { this._buildOrder = null; this._flash(`${o.type} built.`); }
+      else return { action: 'BUILD', build: o.type, spot: { x: o.x, z: o.z }, force: true };
+    }
+    // While positioning a building, movement still works but no attacks.
+    if (this._placing) {
+      if (dir.lengthSq() > 1e-4) return { action: 'PLAYER_MOVE', dir: { x: dir.x, z: dir.z }, run: K.has('shift') };
+      return { action: 'IDLE' };
+    }
 
     // --- Combat: one button (click or Space) that just works ---
     // It auto-resolves: if you carry a bow/spear and a target is within
@@ -252,10 +350,6 @@ export class Simulation {
       if (es) return { action: 'RAID', struct: es.st, target: es.st.pos };
       return { action: 'PLAYER_STRIKE' }; // a swing at empty air
     }
-    if (K.has('b')) {
-      const b = this._buildSel;
-      return (b === 'wall' || b === 'gate') ? { action: 'FORTIFY' } : { action: 'BUILD', build: b };
-    }
     if (K.has('g')) return { action: 'FORTIFY' };
     if (K.has('f')) return { action: 'FARM' };
     if (K.has('c')) return { action: 'CRAFT', craftType: this._craftSel };
@@ -272,7 +366,7 @@ export class Simulation {
 
   _initScene() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x05070d);
+    this.scene.background = new THREE.Color(0x9fc4e6); // open sky
     this.rng = makeRng(this.seed);
     this.world = new World(this.scene, this.rng);
     this.world.tickNow = 0;
@@ -288,6 +382,7 @@ export class Simulation {
     this.entities = [];
     this.world.entities = this.entities; // interiors look up kin by id
     this.interior = null;
+    this.towerPerch = null;
     for (let i = 0; i < CONFIG.population.initial; i++) {
       this.entities.push(new Entity(this.world, this.rng, { generation: 1 }));
     }
@@ -330,6 +425,8 @@ export class Simulation {
 
   reset() {
     if (this.interior) { this.interior.dispose(); this.interior = null; }
+    this.towerPerch = null;
+    this._placing = false; this._ghost = null; this._buildOrder = null;
     for (const e of this.entities) e.alive && e.die();
     while (this.mount.firstChild) this.mount.removeChild(this.mount.firstChild);
     this.renderer.dispose();
@@ -383,10 +480,29 @@ export class Simulation {
         return;
       }
     }
-    this._updateCamera(rdt);
+    if (this.towerPerch && (!this.player || !this.player.alive)) { this._exitInterior(); this._exitPlay(); }
+    if (this.towerPerch) this._towerCamera();
+    else this._updateCamera(rdt);
+    if (this._placing) this._updateGhost();
     this.renderer.render(this.scene, this.camera);
     this._updateHUD();
   };
+
+  // Perched atop the watchtower: a fixed high vantage over the real world,
+  // free mouse-look, from which the player can rain arrows on the field.
+  _towerCamera() {
+    const s = this.towerPerch;
+    if (!this.world.structures.includes(s)) { this._exitInterior(); return; }
+    const yaw = this._camYaw, pitch = this._camPitch;
+    const eye = new THREE.Vector3(s.pos.x, s.pos.y + 7.2, s.pos.z);
+    this.camera.position.lerp(eye, 0.4);
+    const cp = Math.cos(pitch);
+    this.camera.lookAt(
+      eye.x + Math.sin(yaw) * cp,
+      eye.y - Math.sin(pitch),
+      eye.z + Math.cos(yaw) * cp
+    );
+  }
 
   // First-person inside a room: mouse looks (reusing the play yaw/pitch),
   // WASD walks within the room bounds.
@@ -430,7 +546,7 @@ export class Simulation {
       const K = this.keys;
       const f = new THREE.Vector3();
       this.camera.getWorldDirection(f); f.y = 0; f.normalize();
-      const r = new THREE.Vector3(f.z, 0, -f.x);
+      const r = new THREE.Vector3(-f.z, 0, f.x); // camera-right (A/D fixed)
       const spd = 60 * rdt;
       const mv = new THREE.Vector3();
       if (K.has('w') || K.has('arrowup')) mv.add(f);

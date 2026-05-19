@@ -40,7 +40,7 @@ export class World {
   }
 
   _buildLighting() {
-    this.scene.add(new THREE.HemisphereLight(0x9fc5ff, 0x2a2236, 0.75));
+    this.scene.add(new THREE.HemisphereLight(0xbcd9ff, 0x6b6450, 0.95));
     const sun = new THREE.DirectionalLight(0xffe7c4, 1.05);
     sun.position.set(60, 90, 40);
     sun.castShadow = true;
@@ -48,7 +48,8 @@ export class World {
     const d = this.size * 1.1;
     Object.assign(sun.shadow.camera, { left: -d, right: d, top: d, bottom: -d, near: 1, far: 320 });
     this.scene.add(sun);
-    this.scene.fog = new THREE.FogExp2(0x05070d, 0.0065);
+    // Daytime sky: a bright horizon haze instead of the old black void.
+    this.scene.fog = new THREE.FogExp2(0x9fc4e6, 0.0042);
   }
 
   _buildTerrain() {
@@ -575,16 +576,44 @@ export class World {
     mesh.position.copy(origin);
     this.scene.add(mesh);
     this.projectiles.push({
-      pos: origin.clone(), vel: v, dmg, owner, kind, mesh,
+      pos: origin.clone(), vel: v, speed, dmg, owner, kind, mesh, target: null,
       life: CONFIG.projectile.maxLifeTicks
     });
   }
 
   _updateProjectiles(dt, entities) {
     const P = CONFIG.projectile;
+    const valid = (pr, t) => t && t.alive &&
+      !(t.tribeId != null && pr.owner && (t.tribeId === pr.owner.tribeId ||
+        pr.owner.kin?.has(t.id)));
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const pr = this.projectiles[i];
-      pr.vel.y -= P.gravity * dt;
+      // Re-acquire the nearest valid quarry (beast or enemy) and curve
+      // toward it — shots seek their mark so aiming isn't required.
+      if (!valid(pr, pr.target)) {
+        pr.target = null;
+        let bd = P.homingRange * P.homingRange;
+        for (const a of this.animals) {
+          if (!a.alive) continue;
+          const d = (a.pos.x - pr.pos.x) ** 2 + (a.pos.z - pr.pos.z) ** 2;
+          if (d < bd) { bd = d; pr.target = a; }
+        }
+        for (const e of entities) {
+          if (!valid(pr, e)) continue;
+          const d = (e.pos.x - pr.pos.x) ** 2 + (e.pos.z - pr.pos.z) ** 2;
+          if (d < bd) { bd = d; pr.target = e; }
+        }
+      }
+      if (pr.target) {
+        const aim = new THREE.Vector3(
+          pr.target.pos.x - pr.pos.x,
+          pr.target.pos.y + 1 - pr.pos.y,
+          pr.target.pos.z - pr.pos.z).normalize().multiplyScalar(pr.speed);
+        pr.vel.lerp(aim, Math.min(1, P.homingRate * dt));
+        pr.vel.setLength(pr.speed);
+      } else {
+        pr.vel.y -= P.gravity * dt; // free flight until a target appears
+      }
       pr.pos.addScaledVector(pr.vel, dt);
       pr.mesh.position.copy(pr.pos);
       pr.mesh.lookAt(pr.pos.clone().add(pr.vel));

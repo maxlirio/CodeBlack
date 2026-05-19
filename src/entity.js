@@ -345,12 +345,17 @@ export class Entity {
       case 'BUILD': {
         const bt = typeof choice.build === 'string' ? choice.build : 'house';
         const spec = CONFIG.structures.types[bt] ?? CONFIG.structures.types.house;
-        if (!choice.gated && this.energy >= spec.minEnergy && this._buildCooldown <= 0) {
+        // A player-forced build ignores the AI's energy/cool-down gating
+        // (you asked to build it — so you build it).
+        const can = choice.force
+          ? this.energy >= spec.cost + 2
+          : (!choice.gated && this.energy >= spec.minEnergy && this._buildCooldown <= 0);
+        if (can) {
           // Build on the tidy village plot if one was assigned (keeps towns
           // organised); otherwise where standing (founding / player mode).
           const spot = choice.spot;
           if (spot && Math.hypot(this.pos.x - spot.x, this.pos.z - spot.z) > 2.4) {
-            want = this._moveToward(spot, 'walk', dt);
+            want = this._moveToward(spot, 'run', dt);
             break;
           }
           this._buildTimer = (this._buildTimer ?? 0) + dt;

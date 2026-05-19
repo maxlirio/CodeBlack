@@ -79,17 +79,21 @@ export const CONFIG = {
   // melee weapon also be hurled. era gates more advanced kit.
   tools: {
     club:  { wood: 2, dur: 8,  melee: 8,  woodBonus: 0, era: 1 },
-    spear: { wood: 3, dur: 7,  melee: 14, woodBonus: 0, era: 1, throw: { dmg: 20, speed: 34, range: 22 } },
+    spear: { wood: 3, dur: 7,  melee: 14, woodBonus: 0, era: 1, throw: { dmg: 15, speed: 34, range: 24 } },
     axe:   { wood: 4, dur: 10, melee: 11, woodBonus: 2, era: 1 },
     bow:   { wood: 5, dur: 9,  melee: 3,  woodBonus: 0, era: 2,
-             ranged: { dmg: 16, speed: 46, range: 30 } }
+             ranged: { dmg: 12, speed: 46, range: 32 } }
   },
 
   projectile: {
-    gravity: 9,               // arc on thrown spears / arrows
-    hitRadius: 1.4,
-    maxLifeTicks: 90,
-    autoAimCone: 0.32         // gentle aim-assist toward a target in this cone
+    gravity: 9,               // arc before a target is locked
+    hitRadius: 1.6,
+    maxLifeTicks: 110,
+    autoAimCone: 0.32,
+    // Projectiles seek the nearest valid target — bows/spears reliably
+    // connect (low skill), but their damage is modest in trade.
+    homingRange: 42,
+    homingRate: 7             // how hard the shot curves onto its target
   },
 
   home: {
