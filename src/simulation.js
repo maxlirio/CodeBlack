@@ -8,6 +8,7 @@ import { Evolution } from './evolution.js';
 import { inheritTraits } from './personality.js';
 import { recomputeTribes } from './tribes.js';
 import { Interior } from './interior.js';
+import { villageAnchor, nextRingSlot } from './village.js';
 
 // Owns the renderer, the fixed-tick simulation loop, and the UI. Physics,
 // movement, perception, animation-state and decisions all advance on the
@@ -421,14 +422,40 @@ export class Simulation {
     return new THREE.Vector3(px, this.world.heightAt(px, pz), pz);
   }
 
+  // Wall/gate placement snaps to the nearest unbuilt ring slot the AI
+  // would build next, so a player ring matches the village's plan
+  // without pixel-perfect aim. Hold Shift to suppress the snap and
+  // place anywhere; the ghost recolours so you always know which mode
+  // is active.
+  _snapRingSlot(gx, gz) {
+    if (this._buildSel !== 'wall' && this._buildSel !== 'gate') return null;
+    if (this.keys.has('shift')) return null;
+    if (!this.player) return null;
+    const anc = villageAnchor(this.player, this.world);
+    if (!anc) return null;
+    const slot = nextRingSlot(this.world, anc, { x: gx, z: gz });
+    if (!slot) return null;
+    const SNAP_R = 9;
+    if ((slot.x - gx) ** 2 + (slot.z - gz) ** 2 > SNAP_R * SNAP_R) return null;
+    return slot;
+  }
+
   _updateGhost() {
     if (!this._ghost || !this.player) return;
     const g = this._groundAhead();
-    this._ghost.position.set(g.x, g.y + 1.5, g.z);
-    this._ghost.rotation.y = this._buildRot;
-    const blocked = this.world.countStructures(g.x, g.z, 'wall', 2) +
-      this.world.countStructures(g.x, g.z, 'house', 2.5) > 0;
-    this._ghost.material.color.setHex(blocked ? 0xff5a5a : 0xffffff);
+    const snap = this._snapRingSlot(g.x, g.z);
+    if (snap) {
+      const sy = this.world.heightAt(snap.x, snap.z);
+      this._ghost.position.set(snap.x, sy + 1.5, snap.z);
+      this._ghost.rotation.y = snap.facing;
+      this._ghost.material.color.setHex(0x66ff88);     // green = snapped to ring
+    } else {
+      this._ghost.position.set(g.x, g.y + 1.5, g.z);
+      this._ghost.rotation.y = this._buildRot;
+      const blocked = this.world.countStructures(g.x, g.z, 'wall', 2) +
+        this.world.countStructures(g.x, g.z, 'house', 2.5) > 0;
+      this._ghost.material.color.setHex(blocked ? 0xff5a5a : 0xffffff);
+    }
   }
 
   _confirmPlacing() {
@@ -446,23 +473,28 @@ export class Simulation {
       if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
       return;
     }
-    // Ladders auto-orient against the steepest local slope so the player
-    // doesn't have to fiddle with rotation — they almost always want it
-    // leaning on the cliff face right here.
-    let rot = this._buildRot;
-    if (this._buildSel === 'ladder') {
+    // Snap walls/gates to the village ring (unless Shift suppresses).
+    // Ladders auto-orient against the local slope. Otherwise we use
+    // the cursor position and the player's manual rotation.
+    let bx = g.x, bz = g.z, rot = this._buildRot, snapped = false;
+    const ringSnap = this._snapRingSlot(g.x, g.z);
+    if (ringSnap) {
+      bx = ringSnap.x; bz = ringSnap.z; rot = ringSnap.facing; snapped = true;
+    } else if (this._buildSel === 'ladder') {
       const h0x = this.world.heightAt(g.x + 1, g.z) - this.world.heightAt(g.x - 1, g.z);
       const h0z = this.world.heightAt(g.x, g.z + 1) - this.world.heightAt(g.x, g.z - 1);
       // Ladder length runs along +X; aligning that to the gradient lays
       // it across the slope (rails up the hill, rungs across).
       rot = Math.atan2(h0x, h0z);
     }
-    this._buildOrder = { type: this._buildSel, x: g.x, z: g.z, rot,
-      until: this.tickCount + 1600 };
+    this._buildOrder = { type: this._buildSel, x: bx, z: bz, rot,
+      until: this.tickCount + 1600, snapped };
     this._placing = false;
     if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
     if (this._buildSel === 'ladder') {
       this._flash('Ladder set. Walk into the cliff right next to it to scale up.');
+    } else if (snapped) {
+      this._flash(`Snapped ${this._buildSel} to the village wall ring. (Hold Shift to free-place.)`);
     } else {
       this._flash(`Walking over to build a ${this._buildSel}. (B cancels.)`);
     }
