@@ -3,8 +3,22 @@
 export const CONFIG = {
   world: {
     size: 120,            // half-extent of the square play field
-    terrainSegments: 64,
-    terrainAmplitude: 6
+    terrainSegments: 192, // finer subdivisions so the cliff face renders sharply
+    terrainAmplitude: 6,
+    // A huge cliff is carved into every world: usually a single straight
+    // escarpment crossing the map, sometimes a cluster of round plateaus.
+    // ~50× an agent's height (~1.7 units), with a narrow transition so it
+    // reads as a near-vertical wall. Lakes are barred from the highlands.
+    cliff: {
+      step: 85,
+      transition: 1.4,
+      escarpmentChance: 0.7,        // else: plateau cluster
+      plateauCount: [2, 4],         // inclusive min/max for plateau seeds
+      plateauR: [16, 28],
+      climbPointsPerWorld: [2, 3],  // # of ladder-able spots (per cliff)
+      climbReach: 4.0,              // ladder radius around the climb point
+      lakeMaxHeight: 1.2,           // a lake only spawns where ground is this low
+    },
   },
 
   nature: {
@@ -101,8 +115,8 @@ export const CONFIG = {
   },
 
   landmarks: {
-    mountains: 4,             // rocky peaks (solid; need a ladder to scale)
-    lakes: 3,                 // water basins (skirted by reeds)
+    mountains: 0,             // legacy peaks — replaced by the world cliff
+    lakes: 3,                 // water basins (valley-only — see world.cliff)
     boulders: 44,             // scattered rocks, ~half ore-bearing
     flowerPatches: 30,
     deadTrees: 14,

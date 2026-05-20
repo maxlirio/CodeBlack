@@ -42,19 +42,34 @@ export function villagePlan(anchor) {
   return { R, startA, gates, plotR, plotN, layout };
 }
 
-export function wallRing(anchor) {
-  const { R, startA, gates } = villagePlan(anchor);
+export function wallRing(anchor, world = null) {
+  let { R, startA, gates } = villagePlan(anchor);
+  let cx = anchor.x, cz = anchor.z;
+  // Adapt to whatever walls are already there. If a village has at least
+  // four walls/gates inside its area — built by anyone, player included —
+  // we re-anchor the ring to their centroid and average radius so agents
+  // keep extending the perimeter the *players* started instead of going
+  // off to raise a parallel ring of their own on the hash-derived spot.
+  if (world) {
+    const cap = CONFIG.structures.villageRadius;
+    const around = world.structures.filter(
+      (s) => (s.type === 'wall' || s.type === 'gate') &&
+        Math.hypot(s.pos.x - anchor.x, s.pos.z - anchor.z) < cap);
+    if (around.length >= 4) {
+      cx = around.reduce((s, w) => s + w.pos.x, 0) / around.length;
+      cz = around.reduce((s, w) => s + w.pos.z, 0) / around.length;
+      const avg = around.reduce((s, w) => s + Math.hypot(w.pos.x - cx, w.pos.z - cz), 0) / around.length;
+      R = Math.max(8, Math.min(28, avg));
+    }
+  }
   const n = Math.max(12, Math.round((2 * Math.PI * R) / WALL_LEN));
   const gateEvery = Math.max(3, Math.floor(n / gates));
   const slots = [];
   for (let i = 0; i < n; i++) {
     const a = startA + (i / n) * Math.PI * 2;
     slots.push({
-      x: anchor.x + Math.sin(a) * R,
-      z: anchor.z + Math.cos(a) * R,
-      // Wall length runs along its local +X; rotating by `a` makes that
-      // tangent to the ring (the old +90° pointed segments radially,
-      // turning the wall into spokes instead of a circle).
+      x: cx + Math.sin(a) * R,
+      z: cz + Math.cos(a) * R,
       facing: a,
       type: i % gateEvery === (gateEvery >> 1) ? 'gate' : 'wall'
     });
@@ -107,10 +122,12 @@ function occupied(world, x, z, types, r) {
   return false;
 }
 
-// Nearest unbuilt perimeter slot (wall or gate) to `from`.
+// Nearest unbuilt perimeter slot (wall or gate) to `from`. The ring is
+// computed against the *current* world so it reshapes to fit existing
+// walls (player layouts get extended, not abandoned).
 export function nextRingSlot(world, anchor, from) {
   let best = null, bd = Infinity;
-  for (const s of wallRing(anchor)) {
+  for (const s of wallRing(anchor, world)) {
     if (occupied(world, s.x, s.z, ['wall', 'gate'], 2.4)) continue;
     const d = (s.x - from.x) ** 2 + (s.z - from.z) ** 2;
     if (d < bd) { bd = d; best = s; }
@@ -119,7 +136,7 @@ export function nextRingSlot(world, anchor, from) {
 }
 
 export function ringComplete(world, anchor) {
-  return wallRing(anchor).every((s) => occupied(world, s.x, s.z, ['wall', 'gate'], 2.4));
+  return wallRing(anchor, world).every((s) => occupied(world, s.x, s.z, ['wall', 'gate'], 2.4));
 }
 
 // A small rectangular paddock inside the village ring. One pen per

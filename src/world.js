@@ -33,16 +33,98 @@ export class World {
     this.n1 = { fx: rng.range(0.02, 0.05), fz: rng.range(0.02, 0.05), px: rng() * 9, pz: rng() * 9 };
     this.n2 = { fx: rng.range(0.08, 0.13), fz: rng.range(0.08, 0.13), px: rng() * 9, pz: rng() * 9 };
 
+    // The big cliff plan: a stable line/plateau geometry every seed has.
+    this.cliff = this._makeCliffPlan();
+
     this._buildLighting();
     this._buildTerrain();
     this._seedNature();
+  }
+
+  _makeCliffPlan() {
+    const C = CONFIG.world.cliff;
+    const r = this.rng;
+    const escarpment = r.chance(C.escarpmentChance);
+    if (escarpment) {
+      // Line normal (sin a, cos a). Points with sin a*x+cos a*z > offset
+      // sit on the high side. Offset is chosen so the line cuts somewhere
+      // inside the map rather than at the edge.
+      const ang = r.range(0, Math.PI * 2);
+      const offset = r.range(-this.size * 0.35, this.size * 0.35);
+      const climbN = r.int(C.climbPointsPerWorld[0], C.climbPointsPerWorld[1]);
+      const climb = [];
+      // Climb points sit ON the line so the ladder reaches both sides.
+      const tDir = { x: Math.cos(ang), z: -Math.sin(ang) };  // along the cliff
+      for (let i = 0; i < climbN; i++) {
+        const t = ((i + 1) / (climbN + 1)) * (this.size * 1.6) - this.size * 0.8;
+        const jitter = r.range(-6, 6);
+        climb.push({
+          x: Math.sin(ang) * offset + tDir.x * (t + jitter),
+          z: Math.cos(ang) * offset + tDir.z * (t + jitter),
+        });
+      }
+      return { kind: 'escarpment', ang, offset, climb };
+    }
+    const n = r.int(C.plateauCount[0], C.plateauCount[1]);
+    const plates = [];
+    for (let i = 0; i < n; i++) {
+      plates.push({
+        x: r.range(-this.size * 0.7, this.size * 0.7),
+        z: r.range(-this.size * 0.7, this.size * 0.7),
+        R: r.range(C.plateauR[0], C.plateauR[1]),
+      });
+    }
+    // One ladder per plateau, on a stable side of each.
+    const climb = plates.map((pl) => {
+      const a = r.range(0, Math.PI * 2);
+      return { x: pl.x + Math.sin(a) * pl.R, z: pl.z + Math.cos(a) * pl.R };
+    });
+    return { kind: 'plateaus', plates, climb };
+  }
+
+  // Signed distance to the cliff *edge* in flat XZ; positive on the
+  // highland side, negative on the lowland side. Used both by heightAt
+  // (smoothstep over the transition) and by movement collision.
+  _cliffSigned(x, z) {
+    const c = this.cliff;
+    if (!c) return -Infinity;
+    if (c.kind === 'escarpment') {
+      return Math.sin(c.ang) * x + Math.cos(c.ang) * z - c.offset;
+    }
+    // For plateaus the "signed distance" is positive if you're inside any
+    // plateau (height = step), negative otherwise.
+    let best = -Infinity;
+    for (const pl of c.plates) {
+      const d = pl.R - Math.hypot(x - pl.x, z - pl.z);
+      if (d > best) best = d;
+    }
+    return best;
+  }
+
+  _nearClimbPoint(x, z) {
+    const c = this.cliff;
+    if (!c) return false;
+    const r2 = CONFIG.world.cliff.climbReach ** 2;
+    for (const p of c.climb) {
+      if ((p.x - x) ** 2 + (p.z - z) ** 2 < r2) return true;
+    }
+    return false;
   }
 
   heightAt(x, z) {
     const a = CONFIG.world.terrainAmplitude;
     const h1 = Math.sin(x * this.n1.fx + this.n1.px) * Math.cos(z * this.n1.fz + this.n1.pz);
     const h2 = Math.sin(x * this.n2.fx + this.n2.px) * Math.cos(z * this.n2.fz + this.n2.pz);
-    return h1 * a + h2 * a * 0.35;
+    let h = h1 * a + h2 * a * 0.35;
+    // Add the cliff step. Smoothstep over a narrow band so the face is
+    // close to vertical but vertex normals stay continuous.
+    if (this.cliff) {
+      const C = CONFIG.world.cliff;
+      const d = this._cliffSigned(x, z);
+      const t = Math.max(0, Math.min(1, (d + C.transition) / (2 * C.transition)));
+      h += t * C.step;
+    }
+    return h;
   }
 
   _buildLighting() {
@@ -141,13 +223,58 @@ export class World {
         this._addOre(x + Math.sin(a) * (mt.r + 1.5), z + Math.cos(a) * (mt.r + 1.5));
       }
     }
-    // Lakes — flat water with reeds (a scenic skirt).
+    // Lakes — flat water with reeds. Only allowed in valleys (low ground
+    // and well on the lowland side of the cliff), so they never appear
+    // floating on a plateau or a hilltop.
+    const lakeMax = CONFIG.world.cliff.lakeMaxHeight;
     for (let i = 0; i < L.lakes; i++) {
-      const x = this.rng.range(-r, r), z = this.rng.range(-r, r);
+      let x = 0, z = 0, placed = false;
+      for (let tries = 0; tries < 40; tries++) {
+        const cx = this.rng.range(-r, r), cz = this.rng.range(-r, r);
+        const y = this.heightAt(cx, cz);
+        // "Valley" = low ground AND on the lowland side of the cliff. The
+        // lowland's y still sits near sea level; the highland's y sits
+        // tens of units up, so this filter holds even with the big step.
+        if (y < lakeMax && this._cliffSigned(cx, cz) < -2) { x = cx; z = cz; placed = true; break; }
+      }
+      if (!placed) continue;
       const rad = 7 + this.rng.range(0, 7);
       const lk = makeLake(this.rng, rad);
       lk.position.set(x, this.heightAt(x, z) + 0.12, z);
       this.scene.add(lk);
+    }
+    // A wooden ladder leaning against the cliff at every climb point —
+    // visual cue that this is where agents (or you) can scale the face.
+    if (this.cliff) {
+      const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.95 });
+      for (const cp of this.cliff.climb) {
+        const baseY = this.heightAt(cp.x, cp.z) - 0.3;
+        const g = new THREE.Group();
+        for (let i = 0; i < 12; i++) {
+          const rung = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.1, 0.08), wood);
+          rung.position.y = i * 0.6 + 0.6;
+          g.add(rung);
+        }
+        for (const sx of [-0.5, 0.5]) {
+          const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 8.0, 0.1), wood);
+          rail.position.set(sx, 4.0, 0);
+          g.add(rail);
+        }
+        // Face the ladder toward the lowland (escarpment) or outward
+        // (plateau) so it reads as leaning on the visible face.
+        if (this.cliff.kind === 'escarpment') {
+          g.rotation.y = this.cliff.ang;
+        } else {
+          let best = null, bd = Infinity;
+          for (const pl of this.cliff.plates) {
+            const d = (pl.x - cp.x) ** 2 + (pl.z - cp.z) ** 2;
+            if (d < bd) { bd = d; best = pl; }
+          }
+          if (best) g.rotation.y = Math.atan2(cp.x - best.x, cp.z - best.z);
+        }
+        g.position.set(cp.x, baseY, cp.z);
+        this.scene.add(g);
+      }
     }
     // Boulders — some bear ore, the rest are scenery.
     for (let i = 0; i < L.boulders; i++) {
@@ -738,9 +865,11 @@ export class World {
     return n;
   }
 
-  // Push a moving point out of solid walls and mountains. A climber
-  // (ladder in hand) ignores mountains — they can scale them.
-  resolveCollision(x, z, r, canClimb = false) {
+  // Push a moving point out of solid walls; the cliff blocks crossing
+  // between high- and low-lands unless you carry a ladder AND stand near
+  // a climb point. Pass prev (x,z) so we can detect actually crossing the
+  // edge rather than just being on one side.
+  resolveCollision(x, z, r, canClimb = false, prevX = null, prevZ = null) {
     for (const st of this.structures) {
       if (!st.solid) continue;
       const dx = x - st.pos.x;
@@ -754,6 +883,18 @@ export class World {
         z += dz * push;
       }
     }
+    // Cliff edge: forbid stepping from one side to the other unless
+    // there's a ladder in hand AND a climb point in reach.
+    if (this.cliff && prevX != null) {
+      const d0 = this._cliffSigned(prevX, prevZ);
+      const d1 = this._cliffSigned(x, z);
+      if (Math.sign(d0) !== Math.sign(d1) && Math.abs(d0) + Math.abs(d1) > 0.05) {
+        const allowed = canClimb && (
+          this._nearClimbPoint(x, z) || this._nearClimbPoint(prevX, prevZ));
+        if (!allowed) { x = prevX; z = prevZ; }
+      }
+    }
+    // Legacy peaks: if any still exist they remain solid without a ladder.
     if (!canClimb) {
       for (const mt of this.mountains) {
         const dx = x - mt.pos.x;

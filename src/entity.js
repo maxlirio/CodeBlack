@@ -970,14 +970,16 @@ export class Entity {
   }
 
   _physics(dt) {
+    const prevX = this.pos.x, prevZ = this.pos.z;
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
     const lim = this.world.size * 0.97;
     this.pos.x = clamp(this.pos.x, -lim, lim);
     this.pos.z = clamp(this.pos.z, -lim, lim);
-    // Walls always block; mountains block unless you carry a ladder.
+    // Walls always block; the cliff blocks crossings unless a ladder is
+    // in hand AND the agent is at a designated climb point.
     const fixed = this.world.resolveCollision(this.pos.x, this.pos.z, CONFIG.entity.radius,
-      !!this._toolSpec()?.climb);
+      !!this._toolSpec()?.climb, prevX, prevZ);
     this.pos.x = fixed.x;
     this.pos.z = fixed.z;
     const gy = this.world.heightAt(this.pos.x, this.pos.z);
