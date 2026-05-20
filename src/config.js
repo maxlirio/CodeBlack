@@ -12,11 +12,9 @@ export const CONFIG = {
     terrain: {
       ridgeStrength: 2.4,    // folded-noise contribution (sharp ridges)
       terraceStrength: 1.8,  // discrete-step contribution (terraces)
-      cliffCount: [3, 5],    // per-world local cliffs
-      cliffHeight: [9, 18],  // height range — tall enough to read as cliffs
-      cliffR: [5, 11],       // narrow footprint → genuinely steep faces
-      slopeMaxRatio: 1.4,    // rise/run above this is uncrossable (need ladder)
-      ladderReach: 5.5,      // a ladder enables climbing within this radius
+      cliffCount: [2, 4],    // per-world local cliff features (now scenic only)
+      cliffHeight: [5, 11],  // shorter — terrain is for looks, not gating travel
+      cliffR: [9, 16],       // gentler footprint so agents can walk over
       lakeMaxHeight: 1.4,    // lakes only in low valleys (below this y)
     },
   },
@@ -89,9 +87,7 @@ export const CONFIG = {
   },
 
   // Craftable tools & weapons. melee = bonus damage in a strike; ranged
-  // tools fire a projectile; `mine` lets you quarry ore. (The old
-  // climb-tool ladder is gone — ladders are now placeable structures
-  // that let anyone scale a steep slope they otherwise couldn't.)
+  // tools fire a projectile; `mine` lets you quarry ore.
   tools: {
     pickaxe: { wood: 3, dur: 10, melee: 10, era: 1, mine: true },
     sword:   { wood: 4, dur: 12, melee: 22, era: 1 },
@@ -174,7 +170,6 @@ export const CONFIG = {
     // wood; stone is reserved for fortifications & siege so it stays a
     // meaningful goal without starving ordinary construction.
     types: {
-      ladder:     { cost: 5,  wood: 2, stone: 0, minEnergy: 18, hp: 40,  solid: false },
       house:      { cost: 18, wood: 2, stone: 0, minEnergy: 58, hp: 60,  solid: false },
       wall:       { cost: 6,  wood: 1, stone: 0, minEnergy: 24, hp: 80,  solid: true  },
       gate:       { cost: 9,  wood: 2, stone: 0, minEnergy: 32, hp: 100, solid: false },

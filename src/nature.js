@@ -137,16 +137,6 @@ export function makeTool(type) {
     const blade = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.95, 0.03), MAT.flint);
     blade.position.y = 0.68;
     g.add(grip, guard, blade);
-  } else if (type === 'ladder') {
-    const railL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.3, 0.05), MAT.shaft);
-    railL.position.x = -0.16;
-    const railR = railL.clone(); railR.position.x = 0.16;
-    g.add(railL, railR);
-    for (let i = 0; i < 5; i++) {
-      const rung = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.05, 0.05), MAT.shaft);
-      rung.position.y = -0.5 + i * 0.28;
-      g.add(rung);
-    }
   } else { // pickaxe
     const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 4), MAT.shaft);
     const headM = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 0.08), MAT.flint);

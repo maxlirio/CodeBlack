@@ -18,7 +18,7 @@ export class World {
     this.crops = [];        // growing (not yet edible) plots
     this.animals = [];
     this.ores = [];         // mineable ore nodes (need a pickaxe)
-    this.mountains = [];    // {pos, r} solid peaks — need a ladder to scale
+    this.mountains = [];    // {pos, r} legacy peaks (currently unused)
     this.structures = [];
     this.projectiles = [];    // flying arrows / thrown spears
     this.feuds = new Map();   // "tribeA|tribeB" -> hatred magnitude
@@ -88,18 +88,6 @@ export class World {
     return h;
   }
 
-  // True if a placed ladder sits within reach of (x, z). Ladders are
-  // structures, not tools — they enable steep-slope crossing wherever a
-  // player or villager has built one.
-  _nearLadder(x, z) {
-    const r2 = CONFIG.world.terrain.ladderReach ** 2;
-    for (const s of this.structures) {
-      if (s.type !== 'ladder') continue;
-      const dx = s.pos.x - x, dz = s.pos.z - z;
-      if (dx * dx + dz * dz < r2) return true;
-    }
-    return false;
-  }
 
   _buildLighting() {
     this.scene.add(new THREE.HemisphereLight(0xbcd9ff, 0x6b6450, 0.95));
@@ -181,8 +169,9 @@ export class World {
 
   _seedLandmarks(r) {
     const L = CONFIG.landmarks;
-    // Mountains — rocky peaks that block travel (climb with a ladder),
-    // ringed by ore the miners quarry for stone.
+    // Mountains — legacy peak scenery, ringed by ore. Disabled by
+    // default (CONFIG.landmarks.mountains = 0) since the cliff system
+    // is gone; the loop runs zero times unless reactivated.
     for (let i = 0; i < L.mountains; i++) {
       const x = this.rng.range(-r, r), z = this.rng.range(-r, r);
       const y = this.heightAt(x, z);
@@ -486,22 +475,6 @@ export class World {
       lintel.position.y = 3.2;
       mesh.add(post(-1.6), post(1.6), lintel);
       radius = 2.1;
-    } else if (type === 'ladder') {
-      // A tall wooden ladder — purely a climbing-enabler. Anyone within
-      // CONFIG.world.terrain.ladderReach can traverse a steep slope they
-      // otherwise couldn't. Aligned to the slope by the player or AI.
-      const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.95 });
-      const LH = 6.5;
-      for (const sx of [-0.45, 0.45]) {
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, LH, 0.12), wood);
-        rail.position.set(sx, LH * 0.5, 0); rail.castShadow = true; mesh.add(rail);
-      }
-      for (let i = 0; i < 9; i++) {
-        const rung = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.1, 0.08), wood);
-        rung.position.set(0, 0.6 + i * 0.7, 0); mesh.add(rung);
-      }
-      mesh.rotation.y = pos.facing ?? 0;
-      radius = 0.8;
     } else if (type === 'fence') {
       const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.95 });
       for (const sx of [-1.5, 0, 1.5]) {
@@ -820,11 +793,9 @@ export class World {
     return n;
   }
 
-  // Push a moving point out of solid walls; the cliff blocks crossing
-  // between high- and low-lands unless you carry a ladder AND stand near
-  // a climb point. Pass prev (x,z) so we can detect actually crossing the
-  // edge rather than just being on one side.
-  resolveCollision(x, z, r, canClimb = false, prevX = null, prevZ = null) {
+  // Push a moving point out of solid walls. Terrain is freely walkable
+  // — agents and players slide up and down any slope the world produces.
+  resolveCollision(x, z, r, _canClimb = false, _prevX = null, _prevZ = null) {
     for (const st of this.structures) {
       if (!st.solid) continue;
       const dx = x - st.pos.x;
@@ -836,39 +807,6 @@ export class World {
         const push = (min - d) / d;
         x += dx * push;
         z += dz * push;
-      }
-    }
-    // Steep-slope gate: rise/run above slopeMaxRatio is uncrossable.
-    // Using the ratio instead of an absolute dy lets the rule fire on
-    // any genuinely steep face regardless of how big this frame's step
-    // happened to be (small steps over a 60° cliff still produce a
-    // small dy and used to slip through the absolute check).
-    if (prevX != null) {
-      const sdx = x - prevX, sdz = z - prevZ;
-      const stepLen2 = sdx * sdx + sdz * sdz;
-      if (stepLen2 > 1e-4) {
-        const dy = this.heightAt(x, z) - this.heightAt(prevX, prevZ);
-        const slope = Math.abs(dy) / Math.sqrt(stepLen2);
-        if (slope > CONFIG.world.terrain.slopeMaxRatio) {
-          if (!(this._nearLadder(x, z) || this._nearLadder(prevX, prevZ))) {
-            x = prevX; z = prevZ;
-          }
-        }
-      }
-    }
-    // Legacy peaks: if any still exist they remain solid without a ladder.
-    if (!canClimb) {
-      for (const mt of this.mountains) {
-        const dx = x - mt.pos.x;
-        const dz = z - mt.pos.z;
-        const d2 = dx * dx + dz * dz;
-        const min = mt.r + r;
-        if (d2 < min * min && d2 > 1e-6) {
-          const d = Math.sqrt(d2);
-          const push = (min - d) / d;
-          x += dx * push;
-          z += dz * push;
-        }
       }
     }
     return { x, z };

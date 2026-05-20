@@ -59,7 +59,7 @@ export class Entity {
     this.tribeEra = 1;
     this._lastReproTick = -99999;
 
-    // Tools & inventory. tool = { type:'sword'|'bow'|'pickaxe'|'ladder',
+    // Tools & inventory. tool = { type:'sword'|'bow'|'pickaxe',
     // dur:n } or null (unarmed). Wood crafts tools; stone is quarried ore.
     this.wood = 0;
     this.stone = 0;
@@ -981,16 +981,13 @@ export class Entity {
   }
 
   _physics(dt) {
-    const prevX = this.pos.x, prevZ = this.pos.z;
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
     const lim = this.world.size * 0.97;
     this.pos.x = clamp(this.pos.x, -lim, lim);
     this.pos.z = clamp(this.pos.z, -lim, lim);
-    // Walls always block. Steep slopes block unless a placed ladder
-    // sits within reach (handled inside resolveCollision).
-    const fixed = this.world.resolveCollision(this.pos.x, this.pos.z, CONFIG.entity.radius,
-      false, prevX, prevZ);
+    // Walls always block. Terrain is freely walkable.
+    const fixed = this.world.resolveCollision(this.pos.x, this.pos.z, CONFIG.entity.radius);
     this.pos.x = fixed.x;
     this.pos.z = fixed.z;
     const gy = this.world.heightAt(this.pos.x, this.pos.z);

@@ -455,8 +455,7 @@ export function decide(self, p, tick, rng) {
   const prey = p.animals.find((a) => !a.animal.predator && !a.animal.horse) ?? null;
   const wantWeapon = !self.weapon || self.weaponDur <= 1;
   const huntDrive = self.memory.valenceOf('hunted') + 0.2;
-  // Cheapest remaining tool sets the floor for "enough wood to bother
-  // crafting" (the old ladder-tool entry is gone — see config.js).
+  // Cheapest tool sets the floor for "enough wood to bother crafting."
   const minWood = Math.min(...Object.values(CONFIG.tools).map((t) => t.wood));
 
   // Gather wood — for tools AND for building (everything costs wood now),

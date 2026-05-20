@@ -148,9 +148,6 @@ export class Simulation {
           }
           if (k === 'h' && fresh) this._toggleMount();
           if (k === 'b' && fresh) this._togglePlacing();
-          // J — place a ladder. Distinct keybind from the regular build
-          // menu since a ladder is a terrain tool, not a settlement piece.
-          if (k === 'j' && fresh) this._toggleLadderPlacement();
           // 0 — sound the rally horn: nearby kin/tribe break off and
           // hurry to your position for the next ~15 seconds.
           if (k === '0' && fresh) this._rallyKin();
@@ -369,7 +366,7 @@ export class Simulation {
   // ---- Click-to-place building ----
   static FOOTPRINT = {
     house: [2.6, 2.6], wall: [4.2, 1.0], gate: [3.4, 1.4], storehouse: [4, 4],
-    tower: [3, 3], center: [6, 6], ladder: [1.2, 0.4],
+    tower: [3, 3], center: [6, 6],
   };
 
   _togglePlacing() {
@@ -379,19 +376,6 @@ export class Simulation {
     if (this._buildOrder) { this._buildOrder = null; this._flash('Build order cancelled.'); }
     this._makeGhost();
     this._flash(`Placing ${this._buildSel} — point with the mouse, ←/→ rotate, click to set (1-6 type, Esc cancels).`);
-  }
-
-  // J: dedicated ladder-placement mode. Selects the ladder type and
-  // enters the same translucent-ghost placement flow used for buildings,
-  // but with a clearer prompt ("place against a steep slope").
-  _toggleLadderPlacement() {
-    if (this._placing && this._buildSel === 'ladder') return this._cancelPlacing();
-    this._buildSel = 'ladder';
-    if (this._buildOrder) { this._buildOrder = null; this._flash('Build order cancelled.'); }
-    this._placing = true;
-    this._buildRot = 0;
-    this._makeGhost();
-    this._flash('Placing ladder — aim at the foot of a steep slope, ←/→ rotate, click to set.');
   }
 
   _cancelPlacing() {
@@ -473,27 +457,18 @@ export class Simulation {
       if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
       return;
     }
-    // Snap walls/gates to the village ring (unless Shift suppresses).
-    // Ladders auto-orient against the local slope. Otherwise we use
-    // the cursor position and the player's manual rotation.
+    // Snap walls/gates to the village ring (unless Shift suppresses);
+    // otherwise use cursor + manual rotation.
     let bx = g.x, bz = g.z, rot = this._buildRot, snapped = false;
     const ringSnap = this._snapRingSlot(g.x, g.z);
     if (ringSnap) {
       bx = ringSnap.x; bz = ringSnap.z; rot = ringSnap.facing; snapped = true;
-    } else if (this._buildSel === 'ladder') {
-      const h0x = this.world.heightAt(g.x + 1, g.z) - this.world.heightAt(g.x - 1, g.z);
-      const h0z = this.world.heightAt(g.x, g.z + 1) - this.world.heightAt(g.x, g.z - 1);
-      // Ladder length runs along +X; aligning that to the gradient lays
-      // it across the slope (rails up the hill, rungs across).
-      rot = Math.atan2(h0x, h0z);
     }
     this._buildOrder = { type: this._buildSel, x: bx, z: bz, rot,
       until: this.tickCount + 1600, snapped };
     this._placing = false;
     if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
-    if (this._buildSel === 'ladder') {
-      this._flash('Ladder set. Walk into the cliff right next to it to scale up.');
-    } else if (snapped) {
+    if (snapped) {
       this._flash(`Snapped ${this._buildSel} to the village wall ring. (Hold Shift to free-place.)`);
     } else {
       this._flash(`Walking over to build a ${this._buildSel}. (B cancels.)`);
