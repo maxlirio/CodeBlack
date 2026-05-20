@@ -296,7 +296,7 @@ export class World {
     // from z-fighting the grass beneath it.
     this._roadMat ??= new THREE.MeshStandardMaterial({
       color: 0x6f5836, roughness: 1, polygonOffset: true,
-      polygonOffsetFactor: -2, polygonOffsetUnits: -2
+      polygonOffsetFactor: -4, polygonOffsetUnits: -4    // beat the steeper hills
     });
     const pos = [];
     const W = L.roadWidth;
@@ -304,14 +304,17 @@ export class World {
       const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
       const len = Math.hypot(dx, dz) || 1;
       const px = (-dz / len) * W, pz = (dx / len) * W;   // perpendicular half-width
-      const n = Math.max(2, Math.round(len / 2.5));
+      // Sample much more finely so the ribbon hugs ridges and bumps in
+      // the new terrain instead of skipping over them.
+      const n = Math.max(2, Math.round(len / 1.2));
       let pL = null, pR = null;
       for (let s = 0; s <= n; s++) {
         const t = s / n;
         const cx = a.pos.x + dx * t, cz = a.pos.z + dz * t;
         const lx = cx - px, lz = cz - pz, rx = cx + px, rz = cz + pz;
-        const L2 = [lx, this.heightAt(lx, lz) + 0.06, lz];
-        const R2 = [rx, this.heightAt(rx, rz) + 0.06, rz];
+        // Slightly higher lift to stay clear of steeper slope normals.
+        const L2 = [lx, this.heightAt(lx, lz) + 0.18, lz];
+        const R2 = [rx, this.heightAt(rx, rz) + 0.18, rz];
         if (pL) pos.push(...pL, ...pR, ...R2, ...pL, ...R2, ...L2); // two tris
         pL = L2; pR = R2;
       }

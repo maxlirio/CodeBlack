@@ -136,8 +136,15 @@ export class Simulation {
           // Arrow keys spin the structure you're positioning.
           this._buildRot += (k === 'arrowright' || k === 'arrowdown') ? -0.26 : 0.26;
         } else {
-          if (BUILD_KEYS[k]) { this._buildSel = BUILD_KEYS[k]; if (this._placing) this._makeGhost(); }
-          if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
+          if (BUILD_KEYS[k]) {
+            this._buildSel = BUILD_KEYS[k];
+            if (this._placing) this._makeGhost();
+            this._flash(`Build: ${this._buildSel} (press B to start placing).`);
+          }
+          if (CRAFT_KEYS[k]) {
+            this._craftSel = CRAFT_KEYS[k];
+            this._flash(`Craft: ${this._craftSel} (press C to make one).`);
+          }
           if (k === 'h' && fresh) this._toggleMount();
           if (k === 'b' && fresh) this._togglePlacing();
           // J — place a ladder. Distinct keybind from the regular build
