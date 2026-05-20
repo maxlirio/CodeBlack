@@ -948,20 +948,39 @@ export class World {
         }
         continue;
       }
-      // Re-acquire the nearest valid quarry (beast or enemy) and curve
-      // toward it — shots seek their mark so aiming isn't required.
+      // Re-acquire a quarry along the aim line — the closest thing to
+      // the crosshair, not just the closest thing in space. We pick the
+      // candidate with the smallest perpendicular distance to the flight
+      // ray, gated by a forward cone so we don't snap onto targets
+      // behind us. If nothing is roughly in line, the arrow flies free.
       if (!valid(pr, pr.target)) {
         pr.target = null;
-        let bd = P.homingRange * P.homingRange;
-        for (const a of this.animals) {
-          if (!a.alive) continue;
-          const d = (a.pos.x - pr.pos.x) ** 2 + (a.pos.z - pr.pos.z) ** 2;
-          if (d < bd) { bd = d; pr.target = a; }
-        }
-        for (const e of entities) {
-          if (e.inside || !valid(pr, e)) continue;
-          const d = (e.pos.x - pr.pos.x) ** 2 + (e.pos.z - pr.pos.z) ** 2;
-          if (d < bd) { bd = d; pr.target = e; }
+        const aim = pr.vel.clone();
+        const al = aim.length();
+        if (al > 1e-4) {
+          aim.divideScalar(al);
+          const range2 = P.homingRange * P.homingRange;
+          let bestPerp2 = Infinity;
+          const consider = (e) => {
+            const dx = e.pos.x - pr.pos.x;
+            const dy = ((e.pos.y ?? 0) + 0.6) - pr.pos.y;
+            const dz = e.pos.z - pr.pos.z;
+            const d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 > range2) return;
+            const fwd = dx * aim.x + dy * aim.y + dz * aim.z;
+            if (fwd <= 0.5) return;             // behind / right beside us
+            const perp2 = Math.max(0, d2 - fwd * fwd);
+            // Cone gate: 45° (perp/fwd < 1); keeps the snap honest so
+            // arrows you point off into nothing don't curl onto distant
+            // bystanders.
+            if (perp2 > fwd * fwd) return;
+            if (perp2 < bestPerp2) { bestPerp2 = perp2; pr.target = e; }
+          };
+          for (const a of this.animals) if (a.alive) consider(a);
+          for (const e of entities) {
+            if (e.inside || !valid(pr, e)) continue;
+            consider(e);
+          }
         }
       }
       if (pr.target) {
