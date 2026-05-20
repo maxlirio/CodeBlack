@@ -150,6 +150,9 @@ export class Simulation {
           // J — place a ladder. Distinct keybind from the regular build
           // menu since a ladder is a terrain tool, not a settlement piece.
           if (k === 'j' && fresh) this._toggleLadderPlacement();
+          // 0 — sound the rally horn: nearby kin/tribe break off and
+          // hurry to your position for the next ~15 seconds.
+          if (k === '0' && fresh) this._rallyKin();
           // Space = attack (same as a mouse click); auto ranged or melee.
           if (isSpace(k) && fresh && !this._placing) this._attackQueued = true;
         }
@@ -336,6 +339,21 @@ export class Simulation {
     return false;
   }
 
+  // Sound the rally horn. Every same-tribe / kin villager within range
+  // reads world.rallies in decide() and hurries over. Repeat presses
+  // refresh the timer rather than stacking duplicate calls.
+  _rallyKin() {
+    if (!this.player || !this.player.alive) return;
+    const pl = this.player;
+    this.world.rallies = this.world.rallies.filter((r) => r.caller !== pl);
+    this.world.rallies.push({
+      caller: pl, tribeId: pl.tribeId,
+      pos: { x: pl.pos.x, z: pl.pos.z },
+      until: this.tickCount + 450,    // ~15s @1x
+    });
+    this._flash('Rally horn! Kin running to you.');
+  }
+
   _raiseInvaderAlarm(intruder, struct, tribeId) {
     if (tribeId == null || tribeId === intruder.tribeId) return;
     // Replace any existing call on this intruder so the timer resets.
@@ -428,11 +446,26 @@ export class Simulation {
       if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
       return;
     }
-    this._buildOrder = { type: this._buildSel, x: g.x, z: g.z, rot: this._buildRot,
+    // Ladders auto-orient against the steepest local slope so the player
+    // doesn't have to fiddle with rotation — they almost always want it
+    // leaning on the cliff face right here.
+    let rot = this._buildRot;
+    if (this._buildSel === 'ladder') {
+      const h0x = this.world.heightAt(g.x + 1, g.z) - this.world.heightAt(g.x - 1, g.z);
+      const h0z = this.world.heightAt(g.x, g.z + 1) - this.world.heightAt(g.x, g.z - 1);
+      // Ladder length runs along +X; aligning that to the gradient lays
+      // it across the slope (rails up the hill, rungs across).
+      rot = Math.atan2(h0x, h0z);
+    }
+    this._buildOrder = { type: this._buildSel, x: g.x, z: g.z, rot,
       until: this.tickCount + 1600 };
     this._placing = false;
     if (this._ghost) { this.scene.remove(this._ghost); this._ghost = null; }
-    this._flash(`Walking over to build a ${this._buildSel}. (B cancels.)`);
+    if (this._buildSel === 'ladder') {
+      this._flash('Ladder set. Walk into the cliff right next to it to scale up.');
+    } else {
+      this._flash(`Walking over to build a ${this._buildSel}. (B cancels.)`);
+    }
   }
 
   // Translate live keyboard state into the same choice objects the utility

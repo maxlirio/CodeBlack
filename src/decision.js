@@ -164,6 +164,21 @@ export function decide(self, p, tick, rng) {
         : { target: hp });           // no visible attacker yet — guard the house
     }
   }
+  // --- Rally call: a kinsman just blew the horn. Loyal tribe members
+  // hurry over for a while; the call wins over routine foraging but a
+  // truly starving agent still goes to eat.
+  if (self.world.rallies && self.world.rallies.length) {
+    for (const r of self.world.rallies) {
+      if (r.caller === self) continue;
+      if (r.tribeId !== self.tribeId && !self.kin.has(r.caller.id)) continue;
+      const dx = r.caller.pos.x - p.x, dz = r.caller.pos.z - p.z;
+      if (dx * dx + dz * dz < 110 * 110) {
+        add('RALLY', 2.2 + t.loyalty * 1.4 + t.sociability * 0.6,
+          { target: { x: r.caller.pos.x, z: r.caller.pos.z } });
+      }
+    }
+  }
+
   // --- Trespass response: someone broke into one of our halls. Every
   // member of our tribe drops what they're doing and converges to kill
   // the intruder — scaled by how loyal, aggressive and ready-to-fight

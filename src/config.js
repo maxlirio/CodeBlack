@@ -12,11 +12,11 @@ export const CONFIG = {
     terrain: {
       ridgeStrength: 2.4,    // folded-noise contribution (sharp ridges)
       terraceStrength: 1.8,  // discrete-step contribution (terraces)
-      cliffCount: [2, 4],    // per-world local cliff bumps
-      cliffHeight: [4, 9],   // height range of those bumps
-      cliffR: [8, 14],       // footprint radius of those bumps
-      slopeMaxStep: 4.5,     // larger jump → blocked unless near a ladder
-      ladderReach: 3.5,      // a ladder enables climbing within this radius
+      cliffCount: [3, 5],    // per-world local cliffs
+      cliffHeight: [9, 18],  // height range — tall enough to read as cliffs
+      cliffR: [5, 11],       // narrow footprint → genuinely steep faces
+      slopeMaxRatio: 1.4,    // rise/run above this is uncrossable (need ladder)
+      ladderReach: 5.5,      // a ladder enables climbing within this radius
       lakeMaxHeight: 1.4,    // lakes only in low valleys (below this y)
     },
   },

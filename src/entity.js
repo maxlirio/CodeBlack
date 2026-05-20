@@ -745,6 +745,19 @@ export class Entity {
         } else want = 'idle';
         break;
       }
+      case 'RALLY': {
+        // A kinsman's horn — run to their side. Stops at conversational
+        // distance so a cluster forms rather than everyone piling onto
+        // the caller and shoving them around.
+        const t = choice.target;
+        if (t && Math.hypot(this.pos.x - t.x, this.pos.z - t.z) > 2.6) {
+          want = this._moveToward(t, 'run', dt);
+        } else {
+          this.heading = Math.atan2(t.x - this.pos.x, t.z - this.pos.z);
+          want = 'idle';
+        }
+        break;
+      }
       case 'PLAYER_MOVE': {
         // Direct human steering. dir is a world-space XZ vector.
         const dx = choice.dir?.x ?? 0;

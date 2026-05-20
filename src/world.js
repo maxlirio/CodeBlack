@@ -25,6 +25,7 @@ export class World {
     this.bonds = new Map();   // "tribeA|tribeB" -> trade goodwill
     this.truces = new Map();  // "tribeA|tribeB" -> tick the truce expires
     this.invaders = [];       // {intruder, tribeId, pos, until} — a foe is in our hall
+    this.rallies = [];        // {caller, tribeId, pos, until} — kin, to me!
     // Back-compat alias: older code referred to edible nodes as "resources".
     this.resources = this.foods;
 
@@ -837,14 +838,18 @@ export class World {
         z += dz * push;
       }
     }
-    // Steep-slope gate: if this step would scale (or drop) more than the
-    // configured max, refuse it unless there's a placed ladder in reach.
-    // Skip entirely on a zero step to avoid pointless work.
+    // Steep-slope gate: rise/run above slopeMaxRatio is uncrossable.
+    // Using the ratio instead of an absolute dy lets the rule fire on
+    // any genuinely steep face regardless of how big this frame's step
+    // happened to be (small steps over a 60° cliff still produce a
+    // small dy and used to slip through the absolute check).
     if (prevX != null) {
       const sdx = x - prevX, sdz = z - prevZ;
-      if (sdx * sdx + sdz * sdz > 1e-4) {
+      const stepLen2 = sdx * sdx + sdz * sdz;
+      if (stepLen2 > 1e-4) {
         const dy = this.heightAt(x, z) - this.heightAt(prevX, prevZ);
-        if (Math.abs(dy) > CONFIG.world.terrain.slopeMaxStep) {
+        const slope = Math.abs(dy) / Math.sqrt(stepLen2);
+        if (slope > CONFIG.world.terrain.slopeMaxRatio) {
           if (!(this._nearLadder(x, z) || this._nearLadder(prevX, prevZ))) {
             x = prevX; z = prevZ;
           }
@@ -1278,6 +1283,16 @@ export class World {
         if (!inv.intruder || !inv.intruder.alive) return false;
         if (tick > inv.until) return false;
         inv.pos = { x: inv.intruder.pos.x, z: inv.intruder.pos.z };
+        return true;
+      });
+    }
+    // Rally calls: a kin/tribe member yells "to me!" and the others
+    // hurry over for a while. Position tracks the caller live.
+    if (this.rallies.length) {
+      this.rallies = this.rallies.filter((r) => {
+        if (!r.caller || !r.caller.alive) return false;
+        if (tick > r.until) return false;
+        r.pos = { x: r.caller.pos.x, z: r.caller.pos.z };
         return true;
       });
     }
