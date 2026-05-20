@@ -901,12 +901,13 @@ export class Entity {
         const d = Math.hypot(e.pos.x - st.pos.x, e.pos.z - st.pos.z);
         if (d < fd) { fd = d; foe = e; }
       }
-      if (foe && this._shootCd <= 0) {
+      if (foe && this._shootCd <= 0 && (st.arrows ?? 0) > 0) {
         const top = new THREE.Vector3(st.pos.x, st.pos.y + 6.4, st.pos.z);
         const o = { x: foe.pos.x - st.pos.x, z: foe.pos.z - st.pos.z };
         this.world.spawnProjectile(top, o,
           11 + (this.tribeEra - 1) * CONFIG.era.weaponBonusPerEra, this, 'arrow', 44);
         this._shootCd = 22;
+        st.arrows--;
       }
       // A posted watchman holds the tower — only steps down if the supply
       // fails and they're starving (then they go find food themselves).

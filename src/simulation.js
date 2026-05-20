@@ -290,7 +290,9 @@ export class Simulation {
     const s = this.towerPerch;
     if (!s) return;
     if (this.tickCount - this._towerShotAt < 12) return;   // ~0.4s @1x
+    if ((s.arrows ?? 0) <= 0) { this._flash('The quiver is empty — wait for the granary to restock.'); return; }
     this._towerShotAt = this.tickCount;
+    s.arrows--;
     const f = new THREE.Vector3();
     this.camera.getWorldDirection(f);                       // includes Y
     if (f.lengthSq() < 1e-4) return;
@@ -638,7 +640,7 @@ export class Simulation {
       }
     }
     if (this.towerPerch && (!this.player || !this.player.alive)) { this._exitInterior(); this._exitPlay(); }
-    if (this.towerPerch) this._towerCamera();
+    if (this.towerPerch) { this._towerCamera(); this._updatePlayerHud(); }
     else this._updateCamera(rdt);
     if (this._placing) this._updateGhost();
     this.renderer.render(this.scene, this.camera);
@@ -756,7 +758,16 @@ export class Simulation {
     this.camera.position.lerp(cam, 0.35);
     this.camera.lookAt(head);
 
-    const s = this.player, ph = this.ui.ph;
+    this._updatePlayerHud();
+  }
+
+  // Player-HUD refresh. Lives outside _playCamera so it also runs while
+  // the player is perched on a tower (where _playCamera isn't called)
+  // — that's how the corner-of-screen arrow count stays live.
+  _updatePlayerHud() {
+    const s = this.player;
+    if (!s) return;
+    const ph = this.ui.ph;
     ph.energy.textContent = Math.round(s.energy);
     ph.wood.textContent = s.wood;
     ph.stone.textContent = s.stone;
@@ -769,9 +780,23 @@ export class Simulation {
     ph.role.textContent = s.role();
     ph.kin.textContent = s.kin.size;
 
+    // Tower arrow count appears only while perched — the player's only
+    // ammo while ground-side is their own bow durability, shown above.
+    const tp = this.towerPerch;
+    if (ph.arrowRow) {
+      ph.arrowRow.style.display = tp ? 'flex' : 'none';
+      if (tp) {
+        const n = tp.arrows ?? 0;
+        ph.arrows.textContent = `${n} / ${CONFIG.tower.arrowCap}`;
+        ph.arrows.style.color = n === 0 ? '#ff6b6b' : n < 5 ? '#ffd27f' : '#ffe7c4';
+      }
+    }
+
     // Crosshair turns amber when a ranged weapon can fire (ready to shoot).
     const ch = this.ui.crosshair;
-    const ready = (s._rangedReach?.() ?? 0) > 0 && (s._shootCd ?? 0) <= 0;
+    const ready = tp
+      ? (tp.arrows ?? 0) > 0
+      : (s._rangedReach?.() ?? 0) > 0 && (s._shootCd ?? 0) <= 0;
     ch.style.borderColor = ready ? 'rgba(255,210,127,0.9)' : 'rgba(255,255,255,0.6)';
   }
 
@@ -834,7 +859,9 @@ export class Simulation {
         role: document.getElementById('ph-role'),
         kin: document.getElementById('ph-kin'),
         build: document.getElementById('ph-build'),
-        craft: document.getElementById('ph-craft')
+        craft: document.getElementById('ph-craft'),
+        arrowRow: document.getElementById('ph-arrow-row'),
+        arrows: document.getElementById('ph-arrows')
       }
     };
     const pause = document.getElementById('btn-pause');

@@ -599,7 +599,10 @@ export class World {
       owner: builder ? builder.id : null,
       tribe: builder ? builder.tribeId : null,
       _fam: builder ? builder.familyId : null,
-      store: type === 'storehouse' ? { food: 0, wood: 0, stone: 0 } : null
+      store: type === 'storehouse' ? { food: 0, wood: 0, stone: 0 } : null,
+      // Towers start with a half-full quiver and refill from any nearby
+      // friendly storehouse (see world.update's tower-restock loop).
+      arrows: type === 'tower' ? Math.floor(CONFIG.tower.arrowCap * 0.5) : 0,
     };
     this.structures.push(s);
     return s;
@@ -1179,6 +1182,23 @@ export class World {
         inv.pos = { x: inv.intruder.pos.x, z: inv.intruder.pos.z };
         return true;
       });
+    }
+
+    // Tower quivers refill from any friendly storehouse in range — a
+    // slow trickle so a tower under sustained pressure does run dry.
+    const T = CONFIG.tower;
+    for (const st of this.structures) {
+      if (st.type !== 'tower' || st.arrows >= T.arrowCap) continue;
+      // One arrow each `restockTicks / suppliers` — i.e., more granaries
+      // nearby fill the tower faster, which is exactly what you'd want.
+      let suppliers = 0;
+      for (const g of this.structures) {
+        if (g.type !== 'storehouse' || g.tribe !== st.tribe) continue;
+        const dx = g.pos.x - st.pos.x, dz = g.pos.z - st.pos.z;
+        if (dx * dx + dz * dz < T.restockRadius * T.restockRadius) suppliers++;
+      }
+      if (!suppliers) continue;
+      if (tick % Math.max(1, Math.floor(T.restockTicks / suppliers)) === 0) st.arrows++;
     }
 
     // Berry bushes regrow on their cooldown.

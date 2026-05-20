@@ -200,6 +200,13 @@ export const CONFIG = {
     raidGain: 10              // food a raider strips from an enemy store per hit
   },
 
+  tower: {
+    arrowCap: 40,             // a fully-stocked tower holds this many arrows
+    restockRadius: 26,        // a friendly storehouse this close keeps it fed
+    restockTicks: 24,         // one fresh arrow per N ticks per supplying store
+    abandonAtArrows: 0        // a dry watchtower under threat is left empty
+  },
+
   era: {
     // A tribe advances Era when its members' shared progress crosses these
     // thresholds (inventions + structures). No tech tree — pure emergence.
