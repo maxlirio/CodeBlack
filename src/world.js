@@ -836,13 +836,15 @@ export class World {
     }
     // Steep-slope gate: if this step would scale (or drop) more than the
     // configured max, refuse it unless there's a placed ladder in reach.
-    // This replaces the old single-cliff hack with a generic rule that
-    // works for every cliff, terrace, ridge or bump in the world.
+    // Skip entirely on a zero step to avoid pointless work.
     if (prevX != null) {
-      const dy = this.heightAt(x, z) - this.heightAt(prevX, prevZ);
-      if (Math.abs(dy) > CONFIG.world.terrain.slopeMaxStep) {
-        if (!(this._nearLadder(x, z) || this._nearLadder(prevX, prevZ))) {
-          x = prevX; z = prevZ;
+      const sdx = x - prevX, sdz = z - prevZ;
+      if (sdx * sdx + sdz * sdz > 1e-4) {
+        const dy = this.heightAt(x, z) - this.heightAt(prevX, prevZ);
+        if (Math.abs(dy) > CONFIG.world.terrain.slopeMaxStep) {
+          if (!(this._nearLadder(x, z) || this._nearLadder(prevX, prevZ))) {
+            x = prevX; z = prevZ;
+          }
         }
       }
     }

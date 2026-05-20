@@ -3,20 +3,21 @@
 export const CONFIG = {
   world: {
     size: 120,            // half-extent of the square play field
-    terrainSegments: 192, // dense subdivisions for clean ridges/terraces
-    terrainAmplitude: 10, // baseline rolling-hill amplitude
+    terrainSegments: 112, // dense enough for nice ridges, fast enough to run
+    terrainAmplitude: 6,  // baseline rolling-hill amplitude
     // Readable but varied terrain: layered noise + folded ridges + a few
-    // localized cliff bumps. Steep slopes (|dy| > slopeMaxStep per step)
-    // are uncrossable unless a placed ladder is within ladderReach.
+    // localized cliff bumps. A step is only refused when |dy| exceeds
+    // slopeMaxStep — that threshold is tuned to permit every gentle hill
+    // while blocking the cliff faces around the local bumps.
     terrain: {
-      ridgeStrength: 4.5,    // folded-noise contribution (sharp ridges)
-      terraceStrength: 3.5,  // discrete-step contribution (terraces)
-      cliffCount: [3, 6],    // per-world local cliff bumps
-      cliffHeight: [6, 14],  // height range of those bumps
-      cliffR: [8, 16],       // footprint radius of those bumps
-      slopeMaxStep: 2.0,     // larger jump → blocked unless near a ladder
+      ridgeStrength: 2.4,    // folded-noise contribution (sharp ridges)
+      terraceStrength: 1.8,  // discrete-step contribution (terraces)
+      cliffCount: [2, 4],    // per-world local cliff bumps
+      cliffHeight: [4, 9],   // height range of those bumps
+      cliffR: [8, 14],       // footprint radius of those bumps
+      slopeMaxStep: 4.5,     // larger jump → blocked unless near a ladder
       ladderReach: 3.5,      // a ladder enables climbing within this radius
-      lakeMaxHeight: 0.6,    // lakes only in low valleys (below this y)
+      lakeMaxHeight: 1.4,    // lakes only in low valleys (below this y)
     },
   },
 
