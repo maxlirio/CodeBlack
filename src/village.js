@@ -122,6 +122,60 @@ export function ringComplete(world, anchor) {
   return wallRing(anchor).every((s) => occupied(world, s.x, s.z, ['wall', 'gate'], 2.4));
 }
 
+// A small rectangular paddock inside the village ring. One pen per
+// village (anchored off the village's stable plan), so every farmer
+// works the same plan instead of scattering fences around their own
+// houses. The pen has 11 fence segments around a 10×10 square and one
+// gap as a gate so livestock can be driven in.
+const FENCE_LEN = 3.2;
+const PEN_HALF = 5.0;
+
+export function penCenter(anchor) {
+  const { R, startA } = villagePlan(anchor);
+  // A stable offset from the village ring rotation — keeps the pen
+  // tucked beside the houses but well inside the wall, away from the
+  // town centre. Different villages, different angles, all reproducible.
+  const a = startA + 1.2;
+  const dist = Math.max(8, R * 0.55);
+  return { x: anchor.x + Math.sin(a) * dist, z: anchor.z + Math.cos(a) * dist };
+}
+
+export function penRing(anchor) {
+  const c = penCenter(anchor);
+  const slots = [];
+  // North / south sides (fences run along world X — facing 0).
+  for (const z of [-PEN_HALF, +PEN_HALF]) {
+    for (const i of [-1, 0, +1]) {
+      slots.push({ x: c.x + i * FENCE_LEN, z: c.z + z, facing: 0 });
+    }
+  }
+  // East / west sides (rotated 90° to run along world Z).
+  for (const x of [-PEN_HALF, +PEN_HALF]) {
+    for (const i of [-1, 0, +1]) {
+      slots.push({ x: c.x + x, z: c.z + i * FENCE_LEN, facing: Math.PI / 2 });
+    }
+  }
+  // Drop the middle of the south side — that opening is the gate.
+  slots.splice(1, 1);
+  return slots;
+}
+
+export const PEN_HALF_EXTENT = PEN_HALF;
+
+export function nextPenSlot(world, anchor, from) {
+  let best = null, bd = Infinity;
+  for (const s of penRing(anchor)) {
+    if (occupied(world, s.x, s.z, ['fence'], 1.8)) continue;
+    const d = (s.x - from.x) ** 2 + (s.z - from.z) ** 2;
+    if (d < bd) { bd = d; best = s; }
+  }
+  return best;
+}
+
+export function penComplete(world, anchor) {
+  return penRing(anchor).every((s) => occupied(world, s.x, s.z, ['fence'], 1.8));
+}
+
 // Nearest tidy, empty house plot inside the walls.
 export function nextHousePlot(world, anchor, from) {
   let best = null, bd = Infinity;

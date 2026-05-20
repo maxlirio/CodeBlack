@@ -1,5 +1,6 @@
 import { CONFIG } from './config.js';
-import { villageAnchor, nextHousePlot, ringComplete } from './village.js';
+import { villageAnchor, nextHousePlot, ringComplete,
+  nextPenSlot, penComplete, penCenter } from './village.js';
 
 // Lightweight utility-based arbitration. Every tick each candidate action
 // is scored from needs + personality + memory + social context + family,
@@ -487,20 +488,22 @@ export function decide(self, p, tick, rng) {
       add('FARM', 0.7 + t.caution * 0.5 + t.sociability * 0.4 + self.memory.valenceOf('farmed'),
         { farm: true });
     }
-    // Husbandry: a settled, careful villager fences a paddock by home and
+    // Husbandry: a settled, careful villager helps fence the village's
+    // single rectangular paddock (shared plan, like the wall ring), then
     // drives wild grazers into it where they fatten and breed.
     const fenceSpec = CONFIG.structures.types.fence;
-    const fences = self.world.countStructures(self.home.pos.x, self.home.pos.z,
-      'fence', CONFIG.pen.radius + 4);
     const husbandry = self.traits.caution > 0.45 || (self.learn.weights.FARM ?? 1) > 1.0;
-    if (fences < 8 && self.wood >= fenceSpec.wood && husbandry) {
-      const a = fences * 2.39996;                       // golden-angle ring
-      add('BUILD', 0.6 + t.caution * 0.5, {
-        build: 'fence',
-        spot: { x: self.home.pos.x + Math.sin(a) * CONFIG.pen.radius,
-                z: self.home.pos.z + Math.cos(a) * CONFIG.pen.radius },
-        facing: a + Math.PI / 2
-      });
+    const penAnc = villageAnchor(self, self.world) ??
+      { x: self.home.pos.x, z: self.home.pos.z, hasCenter: false };
+    if (husbandry && self.wood >= fenceSpec.wood && !penComplete(self.world, penAnc)) {
+      const slot = nextPenSlot(self.world, penAnc, self.pos);
+      if (slot) {
+        add('BUILD', 0.62 + t.caution * 0.45, {
+          build: 'fence',
+          spot: { x: slot.x, z: slot.z },
+          facing: slot.facing,
+        });
+      }
     }
   }
   // Drive a stray grazer home — it becomes calm, penned livestock there.

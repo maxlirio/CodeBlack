@@ -86,7 +86,7 @@ export const CONFIG = {
   },
 
   pen: {
-    radius: 11,               // a fenced paddock around a farmer's home
+    radius: 5,                // half-extent of the village's fenced paddock
     herdRange: 30,            // how far a farmer ranges to drive in stock
     breedTicks: 1100,         // penned livestock multiply on this cadence
     maxPenned: 8              // per paddock, before they stop breeding

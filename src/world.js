@@ -1254,6 +1254,7 @@ export class World {
         let q = null, qd = Infinity;
         for (const o of this.animals) {
           if (o === a || !o.alive || o.predator || o.horse) continue; // horses outrun wolves
+          if (o.penned) continue;                                     // safe behind the fences
           const d = o.pos.distanceTo(a.pos);
           if (d < qd && d < P.senseRadius) { qd = d; q = o; }
         }

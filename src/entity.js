@@ -9,7 +9,7 @@ import { perceive } from './perception.js';
 import { decide } from './decision.js';
 import { createHumanoid, animateHumanoid, applyRoleStyle } from './humanoid.js';
 import { makeTool } from './nature.js';
-import { villageAnchor, nextRingSlot, nextHousePlot } from './village.js';
+import { villageAnchor, nextRingSlot, nextHousePlot, penCenter } from './village.js';
 
 let NEXT_ID = 1;
 
@@ -725,15 +725,19 @@ export class Entity {
       case 'HERD': {
         const a = choice.animal;
         if (a && a.alive && !a.penned && this.home) {
-          const hp = this.home.pos;
-          if (a.pos.distanceTo(hp) < CONFIG.pen.radius) {
-            a.penned = true; a.penHome = { x: hp.x, z: hp.z };  // safely paddocked
+          // Always drive toward the village's paddock (the actual fenced
+          // square), not the herder's house. Falls back to home position
+          // if this villager has no village anchor yet.
+          const anc = villageAnchor(this, this.world);
+          const pc = anc ? penCenter(anc) : { x: this.home.pos.x, z: this.home.pos.z };
+          if (Math.hypot(a.pos.x - pc.x, a.pos.z - pc.z) < CONFIG.pen.radius) {
+            a.penned = true; a.penHome = { x: pc.x, z: pc.z };  // safely paddocked
             this.memory.remember('herded', tick, a.pos, 0.7);
             want = 'idle';
           } else {
-            // Stand on the far side of the beast from home so its instinct
-            // to flee us pushes it toward the paddock.
-            const ux = a.pos.x - hp.x, uz = a.pos.z - hp.z;
+            // Stand on the far side of the beast from the pen so its
+            // instinct to flee us pushes it toward the gate.
+            const ux = a.pos.x - pc.x, uz = a.pos.z - pc.z;
             const l = Math.hypot(ux, uz) || 1;
             want = this._moveToward(
               { x: a.pos.x + (ux / l) * 3, z: a.pos.z + (uz / l) * 3 }, 'run', dt);
