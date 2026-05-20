@@ -112,7 +112,7 @@ export class Simulation {
     this._buildRot = 0;
     this._craftSel = 'sword';
     const BUILD_KEYS = { 1: 'house', 2: 'wall', 3: 'storehouse', 4: 'tower', 5: 'center', 6: 'gate' };
-    const CRAFT_KEYS = { 7: 'sword', 8: 'bow', 9: 'pickaxe', 0: 'ladder' };
+    const CRAFT_KEYS = { 7: 'sword', 8: 'bow', 9: 'pickaxe' };
     const isSpace = (k) => k === ' ' || k === 'spacebar';
     addEventListener('keydown', (ev) => {
       const k = ev.key.toLowerCase();
@@ -140,6 +140,9 @@ export class Simulation {
           if (CRAFT_KEYS[k]) this._craftSel = CRAFT_KEYS[k];
           if (k === 'h' && fresh) this._toggleMount();
           if (k === 'b' && fresh) this._togglePlacing();
+          // J — place a ladder. Distinct keybind from the regular build
+          // menu since a ladder is a terrain tool, not a settlement piece.
+          if (k === 'j' && fresh) this._toggleLadderPlacement();
           // Space = attack (same as a mouse click); auto ranged or melee.
           if (isSpace(k) && fresh && !this._placing) this._attackQueued = true;
         }
@@ -340,7 +343,7 @@ export class Simulation {
   // ---- Click-to-place building ----
   static FOOTPRINT = {
     house: [2.6, 2.6], wall: [4.2, 1.0], gate: [3.4, 1.4], storehouse: [4, 4],
-    tower: [3, 3], center: [6, 6]
+    tower: [3, 3], center: [6, 6], ladder: [1.2, 0.4],
   };
 
   _togglePlacing() {
@@ -350,6 +353,19 @@ export class Simulation {
     if (this._buildOrder) { this._buildOrder = null; this._flash('Build order cancelled.'); }
     this._makeGhost();
     this._flash(`Placing ${this._buildSel} — point with the mouse, ←/→ rotate, click to set (1-6 type, Esc cancels).`);
+  }
+
+  // J: dedicated ladder-placement mode. Selects the ladder type and
+  // enters the same translucent-ghost placement flow used for buildings,
+  // but with a clearer prompt ("place against a steep slope").
+  _toggleLadderPlacement() {
+    if (this._placing && this._buildSel === 'ladder') return this._cancelPlacing();
+    this._buildSel = 'ladder';
+    if (this._buildOrder) { this._buildOrder = null; this._flash('Build order cancelled.'); }
+    this._placing = true;
+    this._buildRot = 0;
+    this._makeGhost();
+    this._flash('Placing ladder — aim at the foot of a steep slope, ←/→ rotate, click to set.');
   }
 
   _cancelPlacing() {

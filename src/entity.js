@@ -812,13 +812,11 @@ export class Entity {
     return { x: dx / l, z: dz / l };
   }
 
-  // Pick which tool to make: a ladder when wood is short (cheap, lets you
-  // reach mountain ore); a pickaxe for would-be miners; a bow for advanced
-  // hunters; otherwise a sword — the all-round workhorse weapon.
+  // Pick which tool to make: a pickaxe for would-be miners; a bow for
+  // advanced hunters; otherwise a sword — the all-round workhorse weapon.
   _chooseToolType() {
     const era = this.tribeEra ?? 1;
     const W = this.learn.weights;
-    if (this.wood < CONFIG.tools.pickaxe.wood) return 'ladder';
     if ((W.MINE ?? 1) > 1.15 && this.wood >= CONFIG.tools.pickaxe.wood) return 'pickaxe';
     if (era >= 2 && this.wood >= CONFIG.tools.bow.wood &&
         W.HUNT > 1.3 && this.traits.aggression > 0.5) return 'bow';
@@ -976,10 +974,10 @@ export class Entity {
     const lim = this.world.size * 0.97;
     this.pos.x = clamp(this.pos.x, -lim, lim);
     this.pos.z = clamp(this.pos.z, -lim, lim);
-    // Walls always block; the cliff blocks crossings unless a ladder is
-    // in hand AND the agent is at a designated climb point.
+    // Walls always block. Steep slopes block unless a placed ladder
+    // sits within reach (handled inside resolveCollision).
     const fixed = this.world.resolveCollision(this.pos.x, this.pos.z, CONFIG.entity.radius,
-      !!this._toolSpec()?.climb, prevX, prevZ);
+      false, prevX, prevZ);
     this.pos.x = fixed.x;
     this.pos.z = fixed.z;
     const gy = this.world.heightAt(this.pos.x, this.pos.z);

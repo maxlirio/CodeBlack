@@ -3,21 +3,20 @@
 export const CONFIG = {
   world: {
     size: 120,            // half-extent of the square play field
-    terrainSegments: 192, // finer subdivisions so the cliff face renders sharply
-    terrainAmplitude: 6,
-    // A huge cliff is carved into every world: usually a single straight
-    // escarpment crossing the map, sometimes a cluster of round plateaus.
-    // ~50× an agent's height (~1.7 units), with a narrow transition so it
-    // reads as a near-vertical wall. Lakes are barred from the highlands.
-    cliff: {
-      step: 85,
-      transition: 1.4,
-      escarpmentChance: 0.7,        // else: plateau cluster
-      plateauCount: [2, 4],         // inclusive min/max for plateau seeds
-      plateauR: [16, 28],
-      climbPointsPerWorld: [2, 3],  // # of ladder-able spots (per cliff)
-      climbReach: 4.0,              // ladder radius around the climb point
-      lakeMaxHeight: 1.2,           // a lake only spawns where ground is this low
+    terrainSegments: 192, // dense subdivisions for clean ridges/terraces
+    terrainAmplitude: 10, // baseline rolling-hill amplitude
+    // Readable but varied terrain: layered noise + folded ridges + a few
+    // localized cliff bumps. Steep slopes (|dy| > slopeMaxStep per step)
+    // are uncrossable unless a placed ladder is within ladderReach.
+    terrain: {
+      ridgeStrength: 4.5,    // folded-noise contribution (sharp ridges)
+      terraceStrength: 3.5,  // discrete-step contribution (terraces)
+      cliffCount: [3, 6],    // per-world local cliff bumps
+      cliffHeight: [6, 14],  // height range of those bumps
+      cliffR: [8, 16],       // footprint radius of those bumps
+      slopeMaxStep: 2.0,     // larger jump → blocked unless near a ladder
+      ladderReach: 3.5,      // a ladder enables climbing within this radius
+      lakeMaxHeight: 0.6,    // lakes only in low valleys (below this y)
     },
   },
 
@@ -89,10 +88,10 @@ export const CONFIG = {
   },
 
   // Craftable tools & weapons. melee = bonus damage in a strike; ranged
-  // tools fire a projectile; `mine` lets you quarry ore; `climb` lets you
-  // scale mountains. era gates more advanced kit.
+  // tools fire a projectile; `mine` lets you quarry ore. (The old
+  // climb-tool ladder is gone — ladders are now placeable structures
+  // that let anyone scale a steep slope they otherwise couldn't.)
   tools: {
-    ladder:  { wood: 2, dur: 14, melee: 3,  era: 1, climb: true },
     pickaxe: { wood: 3, dur: 10, melee: 10, era: 1, mine: true },
     sword:   { wood: 4, dur: 12, melee: 22, era: 1 },
     bow:     { wood: 5, dur: 9,  melee: 3,  era: 2,
@@ -174,6 +173,7 @@ export const CONFIG = {
     // wood; stone is reserved for fortifications & siege so it stays a
     // meaningful goal without starving ordinary construction.
     types: {
+      ladder:     { cost: 5,  wood: 2, stone: 0, minEnergy: 18, hp: 40,  solid: false },
       house:      { cost: 18, wood: 2, stone: 0, minEnergy: 58, hp: 60,  solid: false },
       wall:       { cost: 6,  wood: 1, stone: 0, minEnergy: 24, hp: 80,  solid: true  },
       gate:       { cost: 9,  wood: 2, stone: 0, minEnergy: 32, hp: 100, solid: false },

@@ -28,103 +28,76 @@ export class World {
     // Back-compat alias: older code referred to edible nodes as "resources".
     this.resources = this.foods;
 
-    // Two octaves of value-ish noise baked from the seeded RNG, so the
-    // terrain is reproducible and height is cheap to sample analytically.
-    this.n1 = { fx: rng.range(0.02, 0.05), fz: rng.range(0.02, 0.05), px: rng() * 9, pz: rng() * 9 };
-    this.n2 = { fx: rng.range(0.08, 0.13), fz: rng.range(0.08, 0.13), px: rng() * 9, pz: rng() * 9 };
+    // Layered noise + ridge fold + plateau-ish terraces + a few discrete
+    // cliff bumps. All baked from the seeded RNG so the world is
+    // reproducible and height stays an O(1) analytic sample.
+    this.n1 = { fx: rng.range(0.020, 0.040), fz: rng.range(0.020, 0.040), px: rng() * 9, pz: rng() * 9 };
+    this.n2 = { fx: rng.range(0.055, 0.085), fz: rng.range(0.055, 0.085), px: rng() * 9, pz: rng() * 9 };
+    this.n3 = { fx: rng.range(0.110, 0.160), fz: rng.range(0.110, 0.160), px: rng() * 9, pz: rng() * 9 };
+    this.nR = { fx: rng.range(0.035, 0.055), fz: rng.range(0.035, 0.055), px: rng() * 9, pz: rng() * 9 };
+    this.nT = { fx: rng.range(0.018, 0.032), fz: rng.range(0.018, 0.032), px: rng() * 9, pz: rng() * 9 };
 
-    // The big cliff plan: a stable line/plateau geometry every seed has.
-    this.cliff = this._makeCliffPlan();
+    // A handful of localized cliff "bumps" — each is a smooth hill with a
+    // sharper inner ramp, producing readable cliffs/terraces without ever
+    // becoming an impassable wall. They're what give silhouettes depth.
+    const T = CONFIG.world.terrain;
+    const nBumps = rng.int(T.cliffCount[0], T.cliffCount[1]);
+    this.cliffBumps = [];
+    for (let i = 0; i < nBumps; i++) {
+      this.cliffBumps.push({
+        x: rng.range(-this.size * 0.78, this.size * 0.78),
+        z: rng.range(-this.size * 0.78, this.size * 0.78),
+        R: rng.range(T.cliffR[0], T.cliffR[1]),
+        H: rng.range(T.cliffHeight[0], T.cliffHeight[1]),
+      });
+    }
 
     this._buildLighting();
     this._buildTerrain();
     this._seedNature();
   }
 
-  _makeCliffPlan() {
-    const C = CONFIG.world.cliff;
-    const r = this.rng;
-    const escarpment = r.chance(C.escarpmentChance);
-    if (escarpment) {
-      // Line normal (sin a, cos a). Points with sin a*x+cos a*z > offset
-      // sit on the high side. Offset is chosen so the line cuts somewhere
-      // inside the map rather than at the edge.
-      const ang = r.range(0, Math.PI * 2);
-      const offset = r.range(-this.size * 0.35, this.size * 0.35);
-      const climbN = r.int(C.climbPointsPerWorld[0], C.climbPointsPerWorld[1]);
-      const climb = [];
-      // Climb points sit ON the line so the ladder reaches both sides.
-      const tDir = { x: Math.cos(ang), z: -Math.sin(ang) };  // along the cliff
-      for (let i = 0; i < climbN; i++) {
-        const t = ((i + 1) / (climbN + 1)) * (this.size * 1.6) - this.size * 0.8;
-        const jitter = r.range(-6, 6);
-        climb.push({
-          x: Math.sin(ang) * offset + tDir.x * (t + jitter),
-          z: Math.cos(ang) * offset + tDir.z * (t + jitter),
-        });
-      }
-      return { kind: 'escarpment', ang, offset, climb };
-    }
-    const n = r.int(C.plateauCount[0], C.plateauCount[1]);
-    const plates = [];
-    for (let i = 0; i < n; i++) {
-      plates.push({
-        x: r.range(-this.size * 0.7, this.size * 0.7),
-        z: r.range(-this.size * 0.7, this.size * 0.7),
-        R: r.range(C.plateauR[0], C.plateauR[1]),
-      });
-    }
-    // One ladder per plateau, on a stable side of each.
-    const climb = plates.map((pl) => {
-      const a = r.range(0, Math.PI * 2);
-      return { x: pl.x + Math.sin(a) * pl.R, z: pl.z + Math.cos(a) * pl.R };
-    });
-    return { kind: 'plateaus', plates, climb };
-  }
-
-  // Signed distance to the cliff *edge* in flat XZ; positive on the
-  // highland side, negative on the lowland side. Used both by heightAt
-  // (smoothstep over the transition) and by movement collision.
-  _cliffSigned(x, z) {
-    const c = this.cliff;
-    if (!c) return -Infinity;
-    if (c.kind === 'escarpment') {
-      return Math.sin(c.ang) * x + Math.cos(c.ang) * z - c.offset;
-    }
-    // For plateaus the "signed distance" is positive if you're inside any
-    // plateau (height = step), negative otherwise.
-    let best = -Infinity;
-    for (const pl of c.plates) {
-      const d = pl.R - Math.hypot(x - pl.x, z - pl.z);
-      if (d > best) best = d;
-    }
-    return best;
-  }
-
-  _nearClimbPoint(x, z) {
-    const c = this.cliff;
-    if (!c) return false;
-    const r2 = CONFIG.world.cliff.climbReach ** 2;
-    for (const p of c.climb) {
-      if ((p.x - x) ** 2 + (p.z - z) ** 2 < r2) return true;
-    }
-    return false;
-  }
-
   heightAt(x, z) {
     const a = CONFIG.world.terrainAmplitude;
+    const T = CONFIG.world.terrain;
+    // Three octaves of value-ish noise → rolling hills, never flat.
     const h1 = Math.sin(x * this.n1.fx + this.n1.px) * Math.cos(z * this.n1.fz + this.n1.pz);
     const h2 = Math.sin(x * this.n2.fx + this.n2.px) * Math.cos(z * this.n2.fz + this.n2.pz);
-    let h = h1 * a + h2 * a * 0.35;
-    // Add the cliff step. Smoothstep over a narrow band so the face is
-    // close to vertical but vertex normals stay continuous.
-    if (this.cliff) {
-      const C = CONFIG.world.cliff;
-      const d = this._cliffSigned(x, z);
-      const t = Math.max(0, Math.min(1, (d + C.transition) / (2 * C.transition)));
-      h += t * C.step;
+    const h3 = Math.sin(x * this.n3.fx + this.n3.px) * Math.cos(z * this.n3.fz + this.n3.pz);
+    let h = h1 * a + h2 * a * 0.45 + h3 * a * 0.20;
+    // Folded noise carves sharp ridges (1 - |n|) — these read as long
+    // running spines from a distance.
+    const r = Math.sin(x * this.nR.fx + this.nR.px) * Math.cos(z * this.nR.fz + this.nR.pz);
+    h += (1 - Math.abs(r)) * T.ridgeStrength;
+    // Discrete terraces: snap a slow octave to a few levels. Creates the
+    // bench-like steps that read as terraces rather than smooth slopes.
+    const tn = Math.sin(x * this.nT.fx + this.nT.px) * Math.cos(z * this.nT.fz + this.nT.pz);
+    h += Math.round(tn * 2) * 0.5 * T.terraceStrength;
+    // A few localized cliffs/hills — smooth bell shape with a sharper
+    // inner ramp so the silhouette has real verticality.
+    for (const b of this.cliffBumps) {
+      const dx = x - b.x, dz = z - b.z;
+      const d = Math.hypot(dx, dz);
+      if (d < b.R) {
+        const t = 1 - d / b.R;
+        // smoothstep ramp (cheap): t² (3 - 2t) — gives soft top + steeper side
+        h += t * t * (3 - 2 * t) * b.H;
+      }
     }
     return h;
+  }
+
+  // True if a placed ladder sits within reach of (x, z). Ladders are
+  // structures, not tools — they enable steep-slope crossing wherever a
+  // player or villager has built one.
+  _nearLadder(x, z) {
+    const r2 = CONFIG.world.terrain.ladderReach ** 2;
+    for (const s of this.structures) {
+      if (s.type !== 'ladder') continue;
+      const dx = s.pos.x - x, dz = s.pos.z - z;
+      if (dx * dx + dz * dz < r2) return true;
+    }
+    return false;
   }
 
   _buildLighting() {
@@ -223,58 +196,20 @@ export class World {
         this._addOre(x + Math.sin(a) * (mt.r + 1.5), z + Math.cos(a) * (mt.r + 1.5));
       }
     }
-    // Lakes — flat water with reeds. Only allowed in valleys (low ground
-    // and well on the lowland side of the cliff), so they never appear
-    // floating on a plateau or a hilltop.
-    const lakeMax = CONFIG.world.cliff.lakeMaxHeight;
+    // Lakes — flat water with reeds. Valleys only: sample until we find
+    // a spot where the ground is low. Skip if no valley spot found.
+    const lakeMax = CONFIG.world.terrain.lakeMaxHeight;
     for (let i = 0; i < L.lakes; i++) {
       let x = 0, z = 0, placed = false;
-      for (let tries = 0; tries < 40; tries++) {
+      for (let tries = 0; tries < 50; tries++) {
         const cx = this.rng.range(-r, r), cz = this.rng.range(-r, r);
-        const y = this.heightAt(cx, cz);
-        // "Valley" = low ground AND on the lowland side of the cliff. The
-        // lowland's y still sits near sea level; the highland's y sits
-        // tens of units up, so this filter holds even with the big step.
-        if (y < lakeMax && this._cliffSigned(cx, cz) < -2) { x = cx; z = cz; placed = true; break; }
+        if (this.heightAt(cx, cz) < lakeMax) { x = cx; z = cz; placed = true; break; }
       }
       if (!placed) continue;
       const rad = 7 + this.rng.range(0, 7);
       const lk = makeLake(this.rng, rad);
       lk.position.set(x, this.heightAt(x, z) + 0.12, z);
       this.scene.add(lk);
-    }
-    // A wooden ladder leaning against the cliff at every climb point —
-    // visual cue that this is where agents (or you) can scale the face.
-    if (this.cliff) {
-      const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.95 });
-      for (const cp of this.cliff.climb) {
-        const baseY = this.heightAt(cp.x, cp.z) - 0.3;
-        const g = new THREE.Group();
-        for (let i = 0; i < 12; i++) {
-          const rung = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.1, 0.08), wood);
-          rung.position.y = i * 0.6 + 0.6;
-          g.add(rung);
-        }
-        for (const sx of [-0.5, 0.5]) {
-          const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 8.0, 0.1), wood);
-          rail.position.set(sx, 4.0, 0);
-          g.add(rail);
-        }
-        // Face the ladder toward the lowland (escarpment) or outward
-        // (plateau) so it reads as leaning on the visible face.
-        if (this.cliff.kind === 'escarpment') {
-          g.rotation.y = this.cliff.ang;
-        } else {
-          let best = null, bd = Infinity;
-          for (const pl of this.cliff.plates) {
-            const d = (pl.x - cp.x) ** 2 + (pl.z - cp.z) ** 2;
-            if (d < bd) { bd = d; best = pl; }
-          }
-          if (best) g.rotation.y = Math.atan2(cp.x - best.x, cp.z - best.z);
-        }
-        g.position.set(cp.x, baseY, cp.z);
-        this.scene.add(g);
-      }
     }
     // Boulders — some bear ore, the rest are scenery.
     for (let i = 0; i < L.boulders; i++) {
@@ -547,6 +482,22 @@ export class World {
       lintel.position.y = 3.2;
       mesh.add(post(-1.6), post(1.6), lintel);
       radius = 2.1;
+    } else if (type === 'ladder') {
+      // A tall wooden ladder — purely a climbing-enabler. Anyone within
+      // CONFIG.world.terrain.ladderReach can traverse a steep slope they
+      // otherwise couldn't. Aligned to the slope by the player or AI.
+      const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.95 });
+      const LH = 6.5;
+      for (const sx of [-0.45, 0.45]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, LH, 0.12), wood);
+        rail.position.set(sx, LH * 0.5, 0); rail.castShadow = true; mesh.add(rail);
+      }
+      for (let i = 0; i < 9; i++) {
+        const rung = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.1, 0.08), wood);
+        rung.position.set(0, 0.6 + i * 0.7, 0); mesh.add(rung);
+      }
+      mesh.rotation.y = pos.facing ?? 0;
+      radius = 0.8;
     } else if (type === 'fence') {
       const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.95 });
       for (const sx of [-1.5, 0, 1.5]) {
@@ -883,15 +834,16 @@ export class World {
         z += dz * push;
       }
     }
-    // Cliff edge: forbid stepping from one side to the other unless
-    // there's a ladder in hand AND a climb point in reach.
-    if (this.cliff && prevX != null) {
-      const d0 = this._cliffSigned(prevX, prevZ);
-      const d1 = this._cliffSigned(x, z);
-      if (Math.sign(d0) !== Math.sign(d1) && Math.abs(d0) + Math.abs(d1) > 0.05) {
-        const allowed = canClimb && (
-          this._nearClimbPoint(x, z) || this._nearClimbPoint(prevX, prevZ));
-        if (!allowed) { x = prevX; z = prevZ; }
+    // Steep-slope gate: if this step would scale (or drop) more than the
+    // configured max, refuse it unless there's a placed ladder in reach.
+    // This replaces the old single-cliff hack with a generic rule that
+    // works for every cliff, terrace, ridge or bump in the world.
+    if (prevX != null) {
+      const dy = this.heightAt(x, z) - this.heightAt(prevX, prevZ);
+      if (Math.abs(dy) > CONFIG.world.terrain.slopeMaxStep) {
+        if (!(this._nearLadder(x, z) || this._nearLadder(prevX, prevZ))) {
+          x = prevX; z = prevZ;
+        }
       }
     }
     // Legacy peaks: if any still exist they remain solid without a ladder.
