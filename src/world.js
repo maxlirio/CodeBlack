@@ -70,10 +70,14 @@ export class World {
     // running spines from a distance.
     const r = Math.sin(x * this.nR.fx + this.nR.px) * Math.cos(z * this.nR.fz + this.nR.pz);
     h += (1 - Math.abs(r)) * T.ridgeStrength;
-    // Discrete terraces: snap a slow octave to a few levels. Creates the
-    // bench-like steps that read as terraces rather than smooth slopes.
+    // Smooth "terrace" bias — a slow extra octave that biases regions
+    // up or down, giving the rolling shape a sense of plateaus. The old
+    // version used Math.round to snap to discrete steps but that made
+    // near-vertical mesh walls at every terrace boundary that the
+    // player and agents bumped into; the smooth bias keeps the variety
+    // without the stairs.
     const tn = Math.sin(x * this.nT.fx + this.nT.px) * Math.cos(z * this.nT.fz + this.nT.pz);
-    h += Math.round(tn * 2) * 0.5 * T.terraceStrength;
+    h += tn * T.terraceStrength;
     // A few localized cliffs/hills — smooth bell shape with a sharper
     // inner ramp so the silhouette has real verticality.
     for (const b of this.cliffBumps) {
