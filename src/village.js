@@ -13,20 +13,61 @@ function hash(x, z) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296; // 0..1
 }
 
-// A stable shared centre: the village's town centre if one exists nearby,
-// else the agent's home snapped to a coarse grid so neighbours agree.
+// A stable shared anchor every villager in the same cluster agrees on.
+// Fast path: this tribe's nearest centre. Slow path: the centroid of
+// the same-tribe homes around this one, snapped to a coarse grid so
+// neighbours converge even before any centre exists. Anchoring to
+// *any* tribe's centre (the old behaviour) had agents from clan A
+// yanked into building clan B's town on top of their own — that's
+// what produced the cross-tribe squiggle of walls.
 export function villageAnchor(entity, world) {
   if (!entity.home) return null;
-  const c = world.nearestStructure(entity.home.pos.x, entity.home.pos.z, 'center');
-  if (c && c.dist < CONFIG.structures.villageRadius) {
-    return { x: Math.round(c.st.pos.x), z: Math.round(c.st.pos.z), hasCenter: true };
+  const ours = (st) =>
+    entity.tribeId == null || st.tribe == null || st.tribe === entity.tribeId;
+  const hx = entity.home.pos.x, hz = entity.home.pos.z;
+
+  // Same-tribe centre wins outright.
+  let nearestC = null, bd2 = Infinity;
+  for (const st of world.structures) {
+    if (st.type !== 'center' || !ours(st)) continue;
+    const d2 = (st.pos.x - hx) ** 2 + (st.pos.z - hz) ** 2;
+    if (d2 < bd2) { bd2 = d2; nearestC = st; }
   }
-  const g = 12;
+  if (nearestC && bd2 < CONFIG.structures.villageRadius ** 2) {
+    return { x: Math.round(nearestC.pos.x), z: Math.round(nearestC.pos.z), hasCenter: true };
+  }
+
+  // No centre yet — anchor to the centroid of nearby same-tribe homes.
+  // Two agents in the same cluster see the same homes, compute the
+  // same centroid, and after snapping agree on a single plan. The old
+  // grid-snap-of-own-home had two neighbours metres apart falling
+  // into different grid cells and building parallel rings.
+  const R2 = CONFIG.tribe.homeMergeDist ** 2;
+  let sx = 0, sz = 0, n = 0;
+  for (const st of world.structures) {
+    if (st.type !== 'house' || !ours(st)) continue;
+    const d2 = (st.pos.x - hx) ** 2 + (st.pos.z - hz) ** 2;
+    if (d2 < R2) { sx += st.pos.x; sz += st.pos.z; n++; }
+  }
+  if (n === 0) { sx = hx; sz = hz; n = 1; }
+  // 8-unit grid is fine enough that the snap rarely flips when one new
+  // home shifts the centroid by a fraction of a unit, coarse enough
+  // that small drift from new arrivals doesn't move the ring.
+  const g = 8;
   return {
-    x: Math.round(entity.home.pos.x / g) * g,
-    z: Math.round(entity.home.pos.z / g) * g,
+    x: Math.round(sx / n / g) * g,
+    z: Math.round(sz / n / g) * g,
     hasCenter: false
   };
+}
+
+// The centre belongs at the heart of the village, not on the house
+// ring. Returning the anchor itself as the build spot keeps "anchor
+// pre-centre" and "anchor post-centre" close enough that the wall ring
+// doesn't jump when the first centre goes up. Caller still respects
+// `occupied()` so two centres won't pile on top of each other.
+export function centerSpot(anchor) {
+  return { x: anchor.x, z: anchor.z };
 }
 
 // Per-village parameters derived from its anchor — distinct but stable.
@@ -41,24 +82,43 @@ export function villagePlan(anchor) {
   return { R, startA, gates, plotR, plotN };
 }
 
-export function wallRing(anchor, world = null) {
+// `tribeId` filters the "adapt to existing walls" centroid so foreign
+// walls inside our radius don't drag our ring sideways. Pass null to
+// fall back to the old all-walls behaviour.
+export function wallRing(anchor, world = null, tribeId = null) {
   let { R, startA, gates } = villagePlan(anchor);
   let cx = anchor.x, cz = anchor.z;
-  // Adapt to whatever walls are already there. If a village has at least
-  // four walls/gates inside its area — built by anyone, player included —
-  // we re-anchor the ring to their centroid and average radius so agents
-  // keep extending the perimeter the *players* started instead of going
-  // off to raise a parallel ring of their own on the hash-derived spot.
   if (world) {
     const cap = CONFIG.structures.villageRadius;
-    const around = world.structures.filter(
-      (s) => (s.type === 'wall' || s.type === 'gate') &&
-        Math.hypot(s.pos.x - anchor.x, s.pos.z - anchor.z) < cap);
-    if (around.length >= 4) {
+    const around = world.structures.filter((s) => {
+      if (s.type !== 'wall' && s.type !== 'gate') return false;
+      if (Math.hypot(s.pos.x - anchor.x, s.pos.z - anchor.z) >= cap) return false;
+      // Tribe filter — foreign walls do NOT reshape our ring.
+      if (tribeId != null && s.tribe != null && s.tribe !== tribeId) return false;
+      return true;
+    });
+    // Threshold bump 4 → 6: a stray placement or two shouldn't reanchor
+    // the whole village plan. Adapt only once there's a real ring in
+    // progress to align to.
+    if (around.length >= 6) {
       cx = around.reduce((s, w) => s + w.pos.x, 0) / around.length;
       cz = around.reduce((s, w) => s + w.pos.z, 0) / around.length;
       const avg = around.reduce((s, w) => s + Math.hypot(w.pos.x - cx, w.pos.z - cz), 0) / around.length;
       R = Math.max(8, Math.min(28, avg));
+      // Realign rotation to match the existing walls. Each existing
+      // wall's angle modulo a sector size yields a phase; averaging
+      // those phases tells us where the slot grid actually lives so
+      // new slots align with old walls instead of landing half a
+      // sector off (the "new walls next to old" squiggle).
+      const nApprox = Math.max(12, Math.round((2 * Math.PI * R) / WALL_LEN));
+      const sectorSize = (2 * Math.PI) / nApprox;
+      let phaseSum = 0;
+      for (const w of around) {
+        const a = Math.atan2(w.pos.x - cx, w.pos.z - cz);
+        let p = a - Math.round(a / sectorSize) * sectorSize;
+        phaseSum += p;
+      }
+      startA = phaseSum / around.length;
     }
   }
   const n = Math.max(12, Math.round((2 * Math.PI * R) / WALL_LEN));
@@ -101,10 +161,10 @@ function occupied(world, x, z, types, r) {
 
 // Nearest unbuilt perimeter slot (wall or gate) to `from`. The ring is
 // computed against the *current* world so it reshapes to fit existing
-// walls (player layouts get extended, not abandoned).
-export function nextRingSlot(world, anchor, from) {
+// same-tribe walls (player layouts get extended, not abandoned).
+export function nextRingSlot(world, anchor, from, tribeId = null) {
   let best = null, bd = Infinity;
-  for (const s of wallRing(anchor, world)) {
+  for (const s of wallRing(anchor, world, tribeId)) {
     if (occupied(world, s.x, s.z, ['wall', 'gate'], 2.4)) continue;
     const d = (s.x - from.x) ** 2 + (s.z - from.z) ** 2;
     if (d < bd) { bd = d; best = s; }
@@ -112,8 +172,9 @@ export function nextRingSlot(world, anchor, from) {
   return best;
 }
 
-export function ringComplete(world, anchor) {
-  return wallRing(anchor, world).every((s) => occupied(world, s.x, s.z, ['wall', 'gate'], 2.4));
+export function ringComplete(world, anchor, tribeId = null) {
+  return wallRing(anchor, world, tribeId).every(
+    (s) => occupied(world, s.x, s.z, ['wall', 'gate'], 2.4));
 }
 
 // A small rectangular paddock inside the village ring. One pen per

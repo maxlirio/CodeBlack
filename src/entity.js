@@ -417,7 +417,8 @@ export class Entity {
         // (or a gateway slot) so the village ends up properly walled with
         // gates at the corners rather than a scatter of stubs.
         const anchor = choice.anchor ?? (this.home ? villageAnchor(this, this.world) : null);
-        const slot = anchor ? nextRingSlot(this.world, anchor, this.pos) : null;
+        const slot = anchor
+          ? nextRingSlot(this.world, anchor, this.pos, this.tribeId) : null;
         const spec = slot ? CONFIG.structures.types[slot.type] : CONFIG.structures.types.wall;
         if (slot && this.energy >= spec.minEnergy && this._buildCooldown <= 0 &&
             this.wood >= (spec.wood ?? 0) && this.stone >= (spec.stone ?? 0)) {

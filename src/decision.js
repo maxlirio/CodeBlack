@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { villageAnchor, nextHousePlot, ringComplete,
+import { villageAnchor, nextHousePlot, ringComplete, centerSpot,
   nextPenSlot, penComplete, penCenter } from './village.js';
 
 // Lightweight utility-based arbitration. Every tick each candidate action
@@ -230,7 +230,7 @@ export function decide(self, p, tick, rng) {
   const wallSpec = CONFIG.structures.types.wall;
   if (hasHome && self.energy >= wallSpec.minEnergy) {
     const anc = villageAnchor(self, self.world) ?? self.home.pos;
-    const ringDone = ringComplete(self.world, anc);
+    const ringDone = ringComplete(self.world, anc, self.tribeId);
     // Economy before military: only wall up calmly once the village has a
     // granary (food security). Under real threat, fortify hard regardless.
     const hasGranary = self.world.countStructures(
@@ -327,7 +327,12 @@ export function decide(self, p, tick, rng) {
           { build: 'storehouse', spot: plot });
       }
       if (self.energy >= Sty.center.minEnergy && self.tribeSize >= 3 && have('center') < cap.center) {
-        add('BUILD', 1.0 + t.sociability * 0.6 + t.loyalty * 0.4, { build: 'center', spot: plot });
+        // Centre belongs AT the anchor, not on the house plot ring.
+        // Otherwise the centre lands ~plotR units off-centre, and after
+        // it's built villageAnchor jumps to its position, relocating
+        // the whole wall ring and stranding any walls already raised.
+        add('BUILD', 1.0 + t.sociability * 0.6 + t.loyalty * 0.4,
+          { build: 'center', spot: anchor ? centerSpot(anchor) : plot });
       }
       // An established village (has a centre) raises watchtowers as civic
       // defence — no longer needs an active threat to bother.
