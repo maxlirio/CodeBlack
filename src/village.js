@@ -38,8 +38,7 @@ export function villagePlan(anchor) {
   const gates = 2 + Math.floor(r2 * 3);                       // 2..4 gateways
   const plotR = R * (0.42 + r * 0.16);
   const plotN = CONFIG.structures.maxHousesPerVillage + 1 + Math.floor(r * 3);
-  const layout = Math.floor(r * 4) % 4;                       // 0..3 town styles
-  return { R, startA, gates, plotR, plotN, layout };
+  return { R, startA, gates, plotR, plotN };
 }
 
 export function wallRing(anchor, world = null) {
@@ -77,38 +76,16 @@ export function wallRing(anchor, world = null) {
   return slots;
 }
 
-// Four distinct town footprints so no two settlements look alike:
-// 0 = ring, 1 = grid, 2 = street rows, 3 = loose cluster.
+// Every village lays its houses out as a single ring around the
+// anchor. Radius and rotation still come from the hash, so two towns
+// are not identical sizes — but the *shape* is always a circle, the
+// reading the user prefers.
 export function housePlots(anchor) {
-  const { startA, plotR, plotN, layout } = villagePlan(anchor);
+  const { startA, plotR, plotN } = villagePlan(anchor);
   const plots = [];
-  if (layout === 1) {                                   // grid
-    const cols = Math.ceil(Math.sqrt(plotN)), gap = plotR * 0.7;
-    for (let i = 0; i < plotN; i++) {
-      const cx = (i % cols) - (cols - 1) / 2;
-      const cz = Math.floor(i / cols) - (cols - 1) / 2;
-      plots.push({ x: anchor.x + cx * gap, z: anchor.z + cz * gap });
-    }
-  } else if (layout === 2) {                             // two street rows
-    const gap = plotR * 0.55;
-    for (let i = 0; i < plotN; i++) {
-      const row = i % 2 ? 1 : -1;
-      const k = Math.floor(i / 2) - plotN / 4;
-      const ca = Math.cos(startA), sa = Math.sin(startA);
-      const lx = k * gap, lz = row * plotR * 0.5;
-      plots.push({ x: anchor.x + lx * ca - lz * sa, z: anchor.z + lx * sa + lz * ca });
-    }
-  } else if (layout === 3) {                             // loose cluster
-    for (let i = 0; i < plotN; i++) {
-      const a = hash(anchor.x + i * 3.1, anchor.z - i * 2.7) * Math.PI * 2;
-      const rr = plotR * (0.3 + hash(anchor.z + i, anchor.x - i));
-      plots.push({ x: anchor.x + Math.sin(a) * rr, z: anchor.z + Math.cos(a) * rr });
-    }
-  } else {                                               // ring
-    for (let i = 0; i < plotN; i++) {
-      const a = startA * 0.5 + (i / plotN) * Math.PI * 2 + 0.3;
-      plots.push({ x: anchor.x + Math.sin(a) * plotR, z: anchor.z + Math.cos(a) * plotR });
-    }
+  for (let i = 0; i < plotN; i++) {
+    const a = startA * 0.5 + (i / plotN) * Math.PI * 2 + 0.3;
+    plots.push({ x: anchor.x + Math.sin(a) * plotR, z: anchor.z + Math.cos(a) * plotR });
   }
   return plots;
 }
