@@ -87,35 +87,38 @@ export function villagePlan(anchor) {
 // fall back to the old all-walls behaviour.
 export function wallRing(anchor, world = null, tribeId = null) {
   let { R, startA, gates } = villagePlan(anchor);
-  let cx = anchor.x, cz = anchor.z;
+  // CRITICAL: the ring's centre stays at the anchor — never the
+  // centroid of existing walls. When a foreign tribe blocked half of
+  // our ring, we could only build the other half; the centroid of
+  // that partial arc was offset from the anchor, and adapting to it
+  // pulled the whole ring sideways each iteration. The squiggle
+  // cascade. Now adapt only adjusts R (size) and startA (rotation
+  // phase). Centre is pinned.
+  const cx = anchor.x, cz = anchor.z;
   if (world) {
     const cap = CONFIG.structures.villageRadius;
     const around = world.structures.filter((s) => {
       if (s.type !== 'wall' && s.type !== 'gate') return false;
       if (Math.hypot(s.pos.x - anchor.x, s.pos.z - anchor.z) >= cap) return false;
-      // Tribe filter — foreign walls do NOT reshape our ring.
       if (tribeId != null && s.tribe != null && s.tribe !== tribeId) return false;
       return true;
     });
-    // Threshold bump 4 → 6: a stray placement or two shouldn't reanchor
-    // the whole village plan. Adapt only once there's a real ring in
-    // progress to align to.
     if (around.length >= 6) {
-      cx = around.reduce((s, w) => s + w.pos.x, 0) / around.length;
-      cz = around.reduce((s, w) => s + w.pos.z, 0) / around.length;
-      const avg = around.reduce((s, w) => s + Math.hypot(w.pos.x - cx, w.pos.z - cz), 0) / around.length;
-      R = Math.max(8, Math.min(28, avg));
-      // Realign rotation to match the existing walls. Each existing
-      // wall's angle modulo a sector size yields a phase; averaging
-      // those phases tells us where the slot grid actually lives so
-      // new slots align with old walls instead of landing half a
-      // sector off (the "new walls next to old" squiggle).
+      // Median radius from the anchor — robust to a few stray walls
+      // an enemy raid left at odd distances (using mean would let
+      // those stray placements pull R wildly).
+      const dists = around.map((w) => Math.hypot(w.pos.x - cx, w.pos.z - cz));
+      dists.sort((a, b) => a - b);
+      R = Math.max(8, Math.min(28, dists[dists.length >> 1]));
+      // Rotation phase fits walls' angles modulo the sector size so
+      // new slots land exactly on existing walls instead of half a
+      // sector off (the "double wall" squiggle).
       const nApprox = Math.max(12, Math.round((2 * Math.PI * R) / WALL_LEN));
       const sectorSize = (2 * Math.PI) / nApprox;
       let phaseSum = 0;
       for (const w of around) {
         const a = Math.atan2(w.pos.x - cx, w.pos.z - cz);
-        let p = a - Math.round(a / sectorSize) * sectorSize;
+        const p = a - Math.round(a / sectorSize) * sectorSize;
         phaseSum += p;
       }
       startA = phaseSum / around.length;
@@ -162,10 +165,18 @@ function occupied(world, x, z, types, r) {
 // Nearest unbuilt perimeter slot (wall or gate) to `from`. The ring is
 // computed against the *current* world so it reshapes to fit existing
 // same-tribe walls (player layouts get extended, not abandoned).
+//
+// The occupancy check uses radius 3.2 — large enough that two rings
+// intersecting at angle won't both place walls 2–3 units apart (the
+// "where rings clash, walls end up crooked" problem), still smaller
+// than the ~4 unit same-ring slot spacing so a clean ring builds out
+// in full without self-blocking.
+const SLOT_FOOTPRINT = 3.2;
+
 export function nextRingSlot(world, anchor, from, tribeId = null) {
   let best = null, bd = Infinity;
   for (const s of wallRing(anchor, world, tribeId)) {
-    if (occupied(world, s.x, s.z, ['wall', 'gate'], 2.4)) continue;
+    if (occupied(world, s.x, s.z, ['wall', 'gate'], SLOT_FOOTPRINT)) continue;
     const d = (s.x - from.x) ** 2 + (s.z - from.z) ** 2;
     if (d < bd) { bd = d; best = s; }
   }
@@ -174,7 +185,7 @@ export function nextRingSlot(world, anchor, from, tribeId = null) {
 
 export function ringComplete(world, anchor, tribeId = null) {
   return wallRing(anchor, world, tribeId).every(
-    (s) => occupied(world, s.x, s.z, ['wall', 'gate'], 2.4));
+    (s) => occupied(world, s.x, s.z, ['wall', 'gate'], SLOT_FOOTPRINT));
 }
 
 // A small rectangular paddock inside the village ring. One pen per
