@@ -206,21 +206,31 @@ export function decide(self, p, tick, rng) {
       1.0 + t.aggression * 1.3 + t.riskTolerance * 0.5 + armed + pack - t.caution * 0.4,
       { victim: wolf, target: wolf.pos });
   }
-  // Standing watch: an armed villager mans an unmanned friendly tower so
-  // the village always has a watchman on the battlements.
-  if (self.energy > 45 && self.home && (self.weapon || t.caution > 0.45 || t.loyalty > 0.5)) {
+  // Standing watch: a willing villager mans an unmanned friendly tower
+  // so the village always has a watchman on the battlements.
+  if (self.energy > 35 && self.home && (self.weapon || t.caution > 0.45 || t.loyalty > 0.5)) {
     const VR = CONFIG.structures.villageRadius;
+    // ONLY our own / kin's towers, AND only those near our home. Old
+    // filter OR'd these so a foreign tower within VR*1.8 of our home
+    // would score, and a far-flung same-tribe tower across the map
+    // would score too. Neither makes sense.
     const tw = self.world.nearestStructure(self.pos.x, self.pos.z, 'tower',
-      (s) => (s.pos.x - self.home.pos.x) ** 2 + (s.pos.z - self.home.pos.z) ** 2 < (VR * 1.8) ** 2 ||
-        s.tribe === self.tribeId || self.kin.has(s.owner));
+      (s) => {
+        const ours = s.tribe === self.tribeId || self.kin.has(s.owner) ||
+          s.tribe == null;
+        if (!ours) return false;
+        const d2 = (s.pos.x - self.home.pos.x) ** 2 + (s.pos.z - self.home.pos.z) ** 2;
+        return d2 < (VR * 1.8) ** 2;
+      });
     if (tw && tw.dist < 32) {
       const manned = (self.world.entities || []).some(
         (e) => e.alive && e.inside === tw.st);
       if (!manned) {
-        // A loyal/cautious villager finds standing watch worthwhile —
-        // strong enough to beat idling/foraging when fed and unthreatened.
-        add('DEFEND', 2.4 + t.loyalty * 1.6 + t.caution * 0.8,
-          { target: tw.st.pos });   // entity DEFEND climbs the nearest tower
+        // Strong enough to beat idling/foraging when fed and unthreatened.
+        // Distance bonus so the nearest available villager wins the post.
+        const closeness = 1 - Math.min(1, tw.dist / 32);
+        add('DEFEND', 2.4 + t.loyalty * 1.6 + t.caution * 0.8 + closeness * 0.8,
+          { target: tw.st.pos });
       }
     }
   }

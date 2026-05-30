@@ -342,23 +342,33 @@ export class Entity {
         break;
       }
       case 'DEFEND': {
-        // Stand watch: fall back to a nearby friendly tower and man it
-        // (any villager can be a watchman — the tower provides the bow).
-        {
-          const VR = CONFIG.structures.villageRadius;
-          const tw = this.world.nearestStructure(this.pos.x, this.pos.z, 'tower',
-            (s) => (this.home && (s.pos.x - this.home.pos.x) ** 2 +
-              (s.pos.z - this.home.pos.z) ** 2 < (VR * 1.8) ** 2) ||
-              s.tribe === this.tribeId || this.kin.has(s.owner));
-          if (tw && tw.dist < 26) {
-            if (tw.dist > 2.4) { want = this._moveToward(tw.st.pos, 'run', dt); break; }
+        const v = choice.victim;
+        // Two flavours of DEFEND, distinguished by whether the decision
+        // assigned us an enemy. With a victim we are fighting that
+        // specific foe; without one we are a watchman headed to the
+        // tower at choice.target. The old code re-searched for the
+        // nearest tower in BOTH cases, which (a) hijacked combat
+        // DEFENDs to detour to a tower instead of fighting the wolf
+        // they were assigned, and (b) used a tighter 26-unit reach
+        // than the decision's 32, so watchmen scored to man a tower
+        // 26-32 away would just walk home instead.
+        if (!v && choice.target) {
+          // Trust the decision's tower target verbatim. Walk over,
+          // then find the tower at that spot and climb in.
+          const tgt = choice.target;
+          const d = Math.hypot(this.pos.x - tgt.x, this.pos.z - tgt.z);
+          if (d > 2.4) { want = this._moveToward(tgt, 'run', dt); break; }
+          const tw = this.world.nearestStructure(tgt.x, tgt.z, 'tower');
+          if (tw && tw.dist < 3.5) {
             this._enterBuilding(tw.st, tick, 0);
             want = 'idle';
             break;
           }
+          // Tower vanished while we were walking — stand down.
+          want = 'idle';
+          break;
         }
-        // Hold the line between home and the nearest intruder.
-        const v = choice.victim;
+        // Combat DEFEND: engage the victim.
         if (v && v.alive) {
           const d = this.pos.distanceTo(v.pos);
           if (d < CONFIG.entity.attackRadius) {
